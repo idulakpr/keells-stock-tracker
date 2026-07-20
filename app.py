@@ -1,65 +1,58 @@
 import streamlit as st
 import pandas as pd
 
-# Mobile view එකට සෙට් වෙන්න layout එක හදාගැනීම
+# Page setup (Mobile friendly)
 st.set_page_config(page_title="Keells Stock Tracker", layout="centered")
 
-st.title("🌾 Keells Live Stock Tracker 🥛")
-st.write("Real-time Rice & Dairy Stock Levels")
+st.title("🛒 Keells Stock Tracker")
 
-# 1. Excel File එක කියවීම (App.xlsx ඔයා upload කරපු file එකමයි)
+# Load Data
 @st.cache_data
 def load_data():
-    try:
-        df = pd.read_excel("App.xlsx")
-        # Columns වල තියෙන හිස්තැන් අයින් කිරීම
-        df.columns = df.columns.str.strip()
-        return df
-    except Exception as e:
-        st.error("Excel file එක කියවන්න බැහැ. 'App.xlsx' file එක නිවැරදිව තියෙනවද බලන්න.")
-        return None
+    # Excel file එක කියවීම
+    df = pd.read_excel("App.xlsx")
+    return df
 
-df = load_data()
+try:
+    df = load_data()
 
-if df is not None:
-    # 2. Dropdown එකක් මඟින් Outlet එක තෝරාගැනීම
+    # 1. Select Outlet
     outlets = sorted(df['Store Description'].unique())
-    selected_outlet = st.selectbox("📍 Select Keells Outlet:", outlets)
+    selected_outlet = st.selectbox("📍 Select Outlet / Store", outlets)
+
+    # Filter data for selected outlet
+    outlet_df = df[df['Store Description'] == selected_outlet]
+
+    # 2. Select Item (Assuming column name is 'Item Description')
+    # *Note: standard column name එක වෙනස් නම් පල්ලෙහා 'Item Description' කෑල්ල මාරු කරන්න.
+    item_column = 'Item Description' if 'Item Description' in df.columns else df.columns[0] 
     
-    if selected_outlet:
-        # තෝරාගත් Outlet එකට අදාළ data විතරක් filter කිරීම
-        outlet_df = df[df['Store Description'] == selected_outlet]
-        
-        # Last update වෙලාව පෙන්වීම
-        if not outlet_df.empty:
-            last_update = outlet_df['Last Update Date Time'].iloc[0]
-            st.info(f"🕒 Last Updated: {last_update}")
-        
-        # 3. 🥛 DAIRY ITEMS සෙක්ෂන් එක
-        st.subheader("🥛 Dairy Items")
-        # Dairy_Key එක හිස් නොවන (NaN නොවන) සහ Stock එකක් තියෙන ඒවා filter කිරීම
-        dairy_df = outlet_df[outlet_df['Dairy_Key'].notna()]
-        
-        if not dairy_df.empty:
-            for idx, row in dairy_df.iterrows():
-                stock = int(row['Current Stock On Hand Units'])
-                # Stock එක 0 නම් රතු පාටින්, නැත්නම් කොළ පාටින් පෙන්වන්න
-                color = "green" if stock > 0 else "red"
-                st.markdown(f"**{row['SKU Description']}**  \nStock: :{color}[{stock} Units]")
-                st.divider()
-        else:
-            st.write("No Dairy items found for this outlet.")
-            
-        # 4. 🌾 RICE ITEMS සෙක්ෂන් එක
-        st.subheader("🌾 Rice Items")
-        # Rice_Key එක හිස් නොවන (NaN නොවන) ඒවා filter කිරීම
-        rice_df = outlet_df[outlet_df['Rice_Key'].notna()]
-        
-        if not rice_df.empty:
-            for idx, row in rice_df.iterrows():
-                stock = int(row['Current Stock On Hand Units'])
-                color = "green" if stock > 0 else "red"
-                st.markdown(f"**{row['SKU Description']}**  \nStock: :{color}[{stock} Units]")
-                st.divider()
-        else:
-            st.write("No Rice items found for this outlet.")
+    items = sorted(outlet_df[item_column].unique())
+    selected_item = st.selectbox("📦 Select Item", items)
+
+    # Filter data for selected item in that outlet
+    item_details = outlet_df[outlet_df[item_column] == selected_item].iloc[0]
+
+    # --- DETAIL VIEW (ඔයා ඉල්ලපු විදිහට ලස්සනට පෙන්වීම) ---
+    st.markdown("---")
+    st.subheader(f"🔹 {selected_item}")
+    
+    # Styled Card View
+    st.info(f"**SKU:** {item_details.get('SKU', 'N/A')}")
+    
+    # Grid එකක් වගේ පෙන්වන්න Columns 2කට බෙදමු
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write(f"🏢 **Store Description:** {item_details.get('Store Description', 'N/A')}")
+        st.write(f"📊 **Current Stock On Hand:** `{item_details.get('Current Stock On Hand Units', 0)}` Units")
+        st.write(f"🔄 **Last Update Time:** {item_details.get('Last Update Date Time', 'N/A')}")
+
+    with col2:
+        st.write(f"⚙️ **Material Status:** {item_details.get('Material Status', 'N/A')}")
+        st.write(f"📝 **Status Description:** {item_details.get('Material Status Description', 'N/A')}")
+        st.write(f"🔑 **Dairy Key:** `{item_details.get('Dairy_Key', 'N/A')}`")
+
+except Exception as e:
+    st.error(f"Error loading data: {e}")
+    st.info("කරුණාකර Excel file එකේ Column names නිවැරදිදැයි පරීක්ෂා කරන්න.")
