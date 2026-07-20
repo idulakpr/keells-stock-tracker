@@ -1,22 +1,34 @@
 import streamlit as st
 import pandas as pd
+import os
 
 # Page setup (Mobile friendly)
 st.set_page_config(page_title="Keells Stock Tracker", layout="centered")
 
 st.title("🛒 Keells Stock Tracker")
 
-# Load Data
-@st.cache_data
-def load_data():
-    df = pd.read_excel("App.xlsx")
-    # SKU එක හැමතිස්සෙම string එකක් විදිහට ගන්න (නැත්නම් .0 වැටෙන්න පුළුවන්)
+# Excel file එකේ නම
+FILE_NAME = "App.xlsx"
+
+# File එක අන්තිමට වෙනස් වුණු වෙලාව අනුව cache එක auto invalidate කරනවා
+def get_file_mtime(filepath):
+    try:
+        return os.path.getmtime(filepath)
+    except:
+        return 0
+
+# Load Data (TTL සහ modification time එක පාවිච්චි කරලා ලෙඩේ නැති කරනවා)
+@st.cache_data(ttl=600, hash_funcs={float: lambda x: int(x)})
+def load_data(mtime):
+    df = pd.read_excel(FILE_NAME)
     if 'SKU' in df.columns:
         df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True)
     return df
 
 try:
-    df = load_data()
+    # File modification time එක ගන්නවා
+    file_mtime = get_file_mtime(FILE_NAME)
+    df = load_data(file_mtime)
 
     # 1. Select Outlet
     outlets = sorted(df['Store Description'].unique())
@@ -26,7 +38,6 @@ try:
     outlet_df = df[df['Store Description'] == selected_outlet]
 
     # --- ITEM SELECTION BY SKU DESCRIPTION ---
-    # Excel එකේ column එක 'SKU Description' ද කියලා බලනවා, නැත්නම් තියෙන වෙන එකක් ගන්නවා
     item_column = 'SKU Description' if 'SKU Description' in df.columns else df.columns[0]
     
     items = sorted(outlet_df[item_column].dropna().unique())
@@ -55,6 +66,12 @@ try:
         st.write(f"📝 **Status Description:** {item_details.get('Material Status Description', 'N/A')}")
         st.write(f"🔑 **Dairy Key:** `{item_details.get('Dairy_Key', 'N/A')}`")
 
+    # Sidebar එකේ පල්ලෙහායින් මැනුවල් Refresh බටන් එකක්
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔄 Clear App Cache / Refresh"):
+        st.cache_data.clear()
+        st.rerun()
+
 except Exception as e:
     st.error(f"Error loading data: {e}")
-    st.info("කරුණාකර Excel file එකේ Column names නිවැරදිදැයි පරීක්ෂා කරන්න.")
+    st.info("කරුණාකර Excel file එකේ Column names සහ නම (App.xlsx) නිවැරදිදැයි පරීක්ෂා කරන්න.")
