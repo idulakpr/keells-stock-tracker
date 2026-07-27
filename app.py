@@ -51,7 +51,7 @@ def categorize_by_sku(sku):
         return 'Dairies'
     return 'Rice'
 
-# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX (PAGINATION FOR DATA FETCHING) ---
+# --- HELPER FUNCTION: SUPABASE PAGINATION FOR DATA FETCHING ---
 def fetch_all_batch_data(selected_batch):
     all_rows = []
     page_size = 1000
@@ -77,7 +77,6 @@ def fetch_all_batch_data(selected_batch):
 # --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES/TIMESTAMPS ---
 def get_unique_badges():
     try:
-        # DB eke thiyena Badges list eka wena wenama fetch karanimata
         response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
         raw_data = response.data
         if raw_data:
@@ -132,7 +131,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
         
         custom_note = st.text_input("📝 වෙනත් සටහනක් (Optional Note - e.g. Evening Update):", "")
 
-        # Generate Unique Badge/Tag Name
+        # Generate Unique Badge Name
         date_str = upload_date.strftime("%Y-%m-%d")
         if custom_note.strip():
             badge_name = f"{date_str} - {batch_num} ({custom_note.strip()})"
@@ -145,60 +144,75 @@ if main_menu == "📤 Upload New Stock (Memorize)":
 
         if uploaded_file is not None:
             if st.button("🚀 Save & Memorize to Database"):
-                with st.spinner("Processing & Memorizing Data..."):
-                    try:
-                        df = pd.read_excel(uploaded_file)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    status_text.text("📖 Excel File එක කියවමින් පවතී...")
+                    df = pd.read_excel(uploaded_file)
 
-                        # 1. Clean Column Names First
-                        rename_dict = {
-                            'SKU Description': 'SKU_Description',
-                            'Store Description': 'Store_Description',
-                            'Current Stock On Hand Units': 'Current_Stock_Units',
-                            'Material Status Description': 'Material_Status_Desc',
-                            'Last Update Date Time': 'Last_Update_Time'
-                        }
-                        df = df.rename(columns=rename_dict)
+                    # 1. Clean Column Names
+                    rename_dict = {
+                        'SKU Description': 'SKU_Description',
+                        'Store Description': 'Store_Description',
+                        'Current Stock On Hand Units': 'Current_Stock_Units',
+                        'Material Status Description': 'Material_Status_Desc',
+                        'Last Update Date Time': 'Last_Update_Time'
+                    }
+                    df = df.rename(columns=rename_dict)
 
-                        # 2. Clean SKU First before Categorization
-                        if 'SKU' in df.columns:
-                            df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
+                    # 2. Clean SKU First before Categorization
+                    if 'SKU' in df.columns:
+                        df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
 
-                        # 3. Categorize (Robust Matching)
-                        df['Category'] = df['SKU'].apply(categorize_by_sku)
+                    # 3. Categorize
+                    df['Category'] = df['SKU'].apply(categorize_by_sku)
 
-                        # 4. Stock Column එක Numeric කරලා NaN 0 කිරීම
-                        if 'Current_Stock_Units' in df.columns:
-                            df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
+                    # 4. Stock Column Numeric කිරීම
+                    if 'Current_Stock_Units' in df.columns:
+                        df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                        # 5. User-Selected Badge Name
-                        df['Uploaded_At'] = badge_name
+                    # 5. User Badge Name
+                    df['Uploaded_At'] = badge_name
 
-                        # 6. Database එකේ තියෙන Columns විතරක් Select කරගැනීම
-                        valid_db_columns = [
-                            'Uploaded_At', 'Store', 'Store_Description', 'SKU', 
-                            'SKU_Description', 'Category', 'Current_Stock_Units', 
-                            'Material_Status_Desc', 'Last_Update_Time'
-                        ]
+                    # 6. Database Columns Matching
+                    valid_db_columns = [
+                        'Uploaded_At', 'Store', 'Store_Description', 'SKU', 
+                        'SKU_Description', 'Category', 'Current_Stock_Units', 
+                        'Material_Status_Desc', 'Last_Update_Time'
+                    ]
+                    
+                    cols_to_keep = [c for c in valid_db_columns if c in df.columns]
+                    df_upload = df[cols_to_keep].copy()
+
+                    # 7. Clean NaN Values for Supabase JSON Safety
+                    df_upload = df_upload.where(pd.notnull(df_upload), None)
+
+                    records = df_upload.to_dict(orient='records')
+                    total_records = len(records)
+                    
+                    status_text.text(f"⬆️ Database එකට Data Upload වෙමින් පවතී... (Total Rows: {total_records})")
+
+                    # Chunk Size 200 to prevent Supabase timeouts
+                    chunk_size = 200
+                    for i in range(0, total_records, chunk_size):
+                        chunk = records[i:i + chunk_size]
+                        supabase.table('stock_history').insert(chunk).execute()
                         
-                        cols_to_keep = [c for c in valid_db_columns if c in df.columns]
-                        df_upload = df[cols_to_keep].copy()
+                        # Progress bar update
+                        progress = min((i + chunk_size) / total_records, 1.0)
+                        progress_bar.progress(progress)
 
-                        # 7. JSON NaN Error Fix
-                        df_upload['Current_Stock_Units'] = df_upload['Current_Stock_Units'].fillna(0)
-                        df_upload = df_upload.astype(object).where(pd.notnull(df_upload), None)
-
-                        records = df_upload.to_dict(orient='records')
-
-                        chunk_size = 500
-                        for i in range(0, len(records), chunk_size):
-                            chunk = records[i:i + chunk_size]
-                            supabase.table('stock_history').insert(chunk).execute()
-
-                        st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'!")
-                        st.balloons()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error Uploading to Database: {e}")
+                    status_text.empty()
+                    progress_bar.empty()
+                    
+                    st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'! Total Rows: {total_records}")
+                    st.balloons()
+                    
+                except Exception as e:
+                    status_text.empty()
+                    progress_bar.empty()
+                    st.error(f"❌ Upload එක අසාර්ථක විය! Error Message: {e}")
 
 # ================= 5. MANAGE / DELETE UPLOADED FILES (PROTECTED) =================
 elif main_menu == "🗑️ Manage / Delete Uploaded Files":
@@ -333,5 +347,4 @@ else:
                     st.dataframe(clean_wh_df, use_container_width=True)
                 else:
                     st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත.")
-  
  
