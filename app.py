@@ -72,16 +72,21 @@ def fetch_all_batch_data(selected_batch):
             break
         start += page_size
         
-    return pd.DataFrame(all_rows)
+    df = pd.DataFrame(all_rows)
+    
+    # 🧹 Remove Duplicates if any exists within the same batch
+    if not df.empty and 'Store' in df.columns and 'SKU' in df.columns:
+        df = df.drop_duplicates(subset=['Store', 'SKU'], keep='last')
+        
+    return df
 
-# --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES (SUPABASE 1000 LIMIT FIX) ---
+# --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES ---
 def get_unique_badges():
     try:
         all_badges = set()
         page_size = 1000
         start = 0
         
-        # Paginate through DB records to ensure all distinct Uploaded_At badges are fetched
         while True:
             response = supabase.table('stock_history') \
                 .select('Uploaded_At') \
@@ -124,7 +129,7 @@ main_menu = st.radio(
         "🏬 Warehouse Stock",
         "🗑️ Manage / Delete Uploaded Files"
     ],
-    index=1 # Outlets Search එක Default විදිහට තෝරාගෙන ඇත
+    index=1
 )
 
 st.markdown("---")
@@ -133,11 +138,9 @@ st.markdown("---")
 if main_menu == "📤 Upload New Stock (Memorize)":
     st.subheader("📤 Upload Daily Excel File to Database")
     
-    # Passcode Check
     if check_admin_password():
         st.caption("මෙතැනින් ඔයාගේ Stock Date එක සහ Batch එක තෝරලා Excel File එක Upload කරන්න.")
 
-        # --- USER INPUT FOR DATE & BATCH SEQUENCE ---
         col_date, col_slot = st.columns(2)
         with col_date:
             upload_date = st.date_input("📅 Stock Data අදාළ දිනය (Date):", datetime.date.today())
@@ -159,6 +162,14 @@ if main_menu == "📤 Upload New Stock (Memorize)":
 
         st.info(f"🏷️ **මෙම File එක Save වන Badge එක:** `{badge_name}`")
 
+        # 🔍 Check if Badge already exists in DB
+        existing_badges = get_unique_badges()
+        overwrite_flag = False
+        
+        if badge_name in existing_badges:
+            st.warning(f"⚠️ **`{badge_name}`** කියන Badge එක දැනටමත් Database එකේ තියෙනවා! ඔබ Upload කළහොත් පැරණි Data අලුත් Data වලින් Replace වනු ඇත.")
+            overwrite_flag = True
+
         uploaded_file = st.file_uploader("Choose App.xlsx file", type=["xlsx", "xls"])
 
         if uploaded_file is not None:
@@ -167,6 +178,11 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                 status_text = st.empty()
                 
                 try:
+                    # 🗑️ If badge exists, clean existing records first to avoid duplicates
+                    if overwrite_flag:
+                        status_text.text("🔄 පැරණි Duplicate Records අයින් කරමින් පවතී...")
+                        supabase.table('stock_history').delete().eq('Uploaded_At', badge_name).execute()
+
                     status_text.text("📖 Excel File එක කියවමින් පවතී...")
                     df = pd.read_excel(uploaded_file)
 
@@ -212,13 +228,11 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     
                     status_text.text(f"⬆️ Database එකට Data Upload වෙමින් පවතී... (Total Rows: {total_records})")
 
-                    # Chunk Size 200 to prevent Supabase timeouts
                     chunk_size = 200
                     for i in range(0, total_records, chunk_size):
                         chunk = records[i:i + chunk_size]
                         supabase.table('stock_history').insert(chunk).execute()
                         
-                        # Progress bar update
                         progress = min((i + chunk_size) / total_records, 1.0)
                         progress_bar.progress(progress)
 
@@ -238,7 +252,6 @@ if main_menu == "📤 Upload New Stock (Memorize)":
 elif main_menu == "🗑️ Manage / Delete Uploaded Files":
     st.subheader("🗑️ Upload කරපු Excel Batches අයින් කිරීම")
     
-    # Passcode Check
     if check_admin_password():
         timestamps = get_unique_badges()
 
@@ -367,4 +380,3 @@ else:
                     st.dataframe(clean_wh_df, use_container_width=True)
                 else:
                     st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත.")
- 
