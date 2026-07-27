@@ -13,7 +13,6 @@ st.set_page_config(
 )
 
 # --- Supabase Initialization ---
-# Streamlit Secrets (secrets.toml) මගින් Credentials ලබා ගනී
 SUPABASE_URL = st.secrets.get("SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 
@@ -29,7 +28,6 @@ supabase = init_supabase()
 
 # --- Helper Functions ---
 def categorize_by_sku(sku):
-    """SKU එක අනුව Category එක වෙන් කිරීම"""
     try:
         sku_str = str(sku).strip().split('.')[0]
         if sku_str.isdigit():
@@ -44,7 +42,6 @@ def categorize_by_sku(sku):
 
 @st.cache_data(ttl=60)
 def fetch_all_data():
-    """Database එකෙන් සියලුම Data ලබා ගැනීම"""
     try:
         response = supabase.table("stock_history").select("*").execute()
         df = pd.DataFrame(response.data)
@@ -79,21 +76,17 @@ with tab1:
                 try:
                     df = pd.read_excel(uploaded_file)
 
-                    # 🛠️ Fix NaN / Empty values for JSON compatibility (Out of range float fix)
+                    # 🛠️ Excel එකේ හිස්/Blank Cells නිසා එන Float/JSON Error එක Fix කිරීමට එකතු කළ පේළිය:
                     df = df.where(pd.notnull(df), None)
 
-                    # SKU Format Cleaning
                     if 'SKU' in df.columns:
                         df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-                    # Category Identification
                     df['Category'] = df['SKU'].apply(categorize_by_sku)
 
-                    # Upload Timestamp
                     upload_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     df['Uploaded_At'] = upload_timestamp
 
-                    # Database Column Name Mapping
                     rename_dict = {
                         'SKU Description': 'SKU_Description',
                         'Store Description': 'Store_Description',
@@ -103,7 +96,6 @@ with tab1:
                     }
                     df = df.rename(columns=rename_dict)
 
-                    # Keep only required columns that exist in DataFrame
                     db_columns = [
                         'Uploaded_At', 'Plant', 'Store_Description', 'SKU', 
                         'SKU_Description', 'Category', 'Current_Stock_Units', 
@@ -112,10 +104,8 @@ with tab1:
                     available_cols = [c for c in db_columns if c in df.columns]
                     df_to_upload = df[available_cols]
 
-                    # Convert DataFrame to Dict/JSON for Supabase Upload
                     records = df_to_upload.to_dict(orient='records')
 
-                    # Upload in batches of 1000 rows (performance optimisation)
                     batch_size = 1000
                     for i in range(0, len(records), batch_size):
                         supabase.table("stock_history").insert(records[i:i+batch_size]).execute()
@@ -141,14 +131,11 @@ with tab2:
     if full_df.empty:
         st.warning("Database එකේ Data කිසිවක් නැත. කරුණාකර පළමුව Excel File එකක් Upload කරන්න.")
     else:
-        # Batch Select Filter
         available_batches = sorted(full_df['Uploaded_At'].dropna().unique(), reverse=True)
         selected_batch = st.selectbox("📅 Select Upload Batch/Timestamp:", available_batches)
 
-        # Filter Data by Batch
         batch_df = full_df[full_df['Uploaded_At'] == selected_batch]
 
-        # Outlet Search Filter
         outlets = sorted(batch_df['Store_Description'].dropna().unique())
         selected_outlet = st.selectbox("🏪 Select Outlet / Store:", ["All Outlets"] + list(outlets))
 
@@ -156,7 +143,6 @@ with tab2:
         if selected_outlet != "All Outlets":
             filtered_df = filtered_df[filtered_df['Store_Description'] == selected_outlet]
 
-        # Metric Displays
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Records", len(filtered_df))
         col2.metric("Zero Stock SKUs", len(filtered_df[filtered_df['Current_Stock_Units'] == 0]))
@@ -174,7 +160,6 @@ with tab3:
     if full_df.empty:
         st.warning("Database එකේ Data කිසිවක් නැත.")
     else:
-        # Filter for Warehouse plant/store
         dcw1_df = full_df[
             (full_df['Store_Description'].str.contains('DCW1|Kerawalapitiya', case=False, na=False)) |
             (full_df['Plant'].astype(str).str.contains('DCW1', case=False, na=False))
