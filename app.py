@@ -266,7 +266,7 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
     if not timestamps:
         st.warning("⚠️ Database එකේ කිසිම Data එකක් නැත.")
     else:
-        st.caption("කාල පරාසයක් සහ අවශ්‍ය Filter එක තෝරා OOS Trend එක බලන්න:")
+        st.caption("කාල පරාසයක් සහ අවශ්‍ය Filter එක තෝරන්න OOS Trend එක බලන්න:")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -321,12 +321,12 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                             for badge in filtered_badges:
                                 batch_df = fetch_all_batch_data(badge)
                                 if not batch_df.empty:
-                                    # IZCS සහ DCDI ඇතුළු අනෙකුත් Non-store කේතයන් ඉවත් කිරීම
-                                    wh_mask = (
-                                        batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                                    # Warehouse (DCW1, Kerawalapitiya) සහ IZCS, DCDI යනු Non-store/DC වන බැවින් Outlets ලැයිස්තුවෙන් ඉවත් කිරීම
+                                    non_outlet_mask = (
+                                        batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya|Common Storage|Import DC', case=False, na=False) |
                                         batch_df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
                                     )
-                                    outlets_b_df = batch_df[~wh_mask]
+                                    outlets_b_df = batch_df[~non_outlet_mask]
                                     
                                     if 'Current_Stock_Units' in outlets_b_df.columns:
                                         outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
@@ -404,11 +404,11 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                 else:
                     selected_cat_outlet = st.radio("📂 Category එක තෝරන්න:", ["Dairies", "Rice"], horizontal=True, key="trend_cat_filter_outlet")
                     
-                    wh_mask_sample = (
-                        sample_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                    non_outlet_mask_sample = (
+                        sample_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya|Common Storage|Import DC', case=False, na=False) |
                         sample_df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
                     )
-                    outlets_sample_df = sample_df[~wh_mask_sample]
+                    outlets_sample_df = sample_df[~non_outlet_mask_sample]
                     
                     all_outlets_list = sorted(outlets_sample_df[store_c].dropna().unique().tolist())
                     
@@ -422,11 +422,11 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                             for badge in filtered_badges:
                                 batch_df = fetch_all_batch_data(badge)
                                 if not batch_df.empty:
-                                    wh_mask_b = (
-                                        batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                                    non_outlet_mask_b = (
+                                        batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya|Common Storage|Import DC', case=False, na=False) |
                                         batch_df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
                                     )
-                                    outlets_b_df = batch_df[~wh_mask_b]
+                                    outlets_b_df = batch_df[~non_outlet_mask_b]
 
                                     if 'Current_Stock_Units' in outlets_b_df.columns:
                                         outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
@@ -529,14 +529,21 @@ else:
             store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
             item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
 
-            # IZCS සහ DCDI අයින් කර සාමාන්‍ය Outlets සහ Warehouse වෙන් කිරීම
+            # --- STRICT WAREHOUSE FILTER (DCW1 පමණක් තෝරා ගැනීම) ---
+            # මෙහිදී DCW1 Store එකෙන් පමණක් Warehouse Data ලබා ගනී (IZCS, DCDI සහ අනෙක් ඒවා සම්පූර්ණයෙන්ම ඉවත් වේ)
             warehouse_mask = (
-                df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
-                df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
+                df[store_desc_col].astype(str).str.strip().str.upper().eq('DCW1') |
+                df.get('Store', pd.Series()).astype(str).str.strip().str.upper().eq('DCW1')
             )
             
             warehouse_df = df[warehouse_mask]
-            outlets_df = df[~warehouse_mask]
+
+            # Outlets සඳහා IZCS, DCDI, DCW1 සහ Common Storage ආදිය ඉවත් කිරීම
+            outlets_mask = ~(
+                df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya|Common Storage|Import DC', case=False, na=False) |
+                df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
+            )
+            outlets_df = df[outlets_mask]
 
             # --- OUTLET STOCK SEARCH (FAST) ---
             if main_menu == "🔍 Outlet Stock Search (Latest)":
@@ -609,10 +616,14 @@ else:
                 st.subheader("🏬 Warehouse Stock - DCW1 (Latest)")
                 
                 if not warehouse_df.empty:
+                    # ඩබල් එන එක සම්පූර්ණයෙන්ම වැළැක්වීමට SKU අනුව Drop duplicates කර DCW1 එකෙන් පමණක් පෙන්වීම
+                    clean_wh_df = warehouse_df.drop_duplicates(subset=['SKU']).copy()
+                    
                     wh_display_cols = ['SKU', item_column, 'Current_Stock_Units', 'Category']
-                    available_wh = [c for c in warehouse_df.columns if c in wh_display_cols]
-                    clean_wh_df = warehouse_df[available_wh].reset_index(drop=True)
+                    available_wh = [c for c in clean_wh_df.columns if c in wh_display_cols]
+                    final_wh_df = clean_wh_df[available_wh].reset_index(drop=True)
+                    final_wh_df.columns = [c.replace('_', ' ') for c in available_wh]
 
-                    st.dataframe(clean_wh_df, use_container_width=True)
+                    st.dataframe(final_wh_df, use_container_width=True)
                 else:
                     st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත.")
