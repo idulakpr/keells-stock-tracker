@@ -132,29 +132,35 @@ try:
         with sub_tab2:
             render_zero_stock_section("Rice")
 
-    # ================= 3. WAREHOUSE STOCK =================
+    # ================= 3. WAREHOUSE STOCK (RICE ONLY) =================
     elif main_menu == "🏬 Warehouse Stock":
-        st.subheader("🏬 Warehouse Stock (DCW1 - Kerawalapitiya)")
-        st.caption("Warehouse (DCW1) එකේ දැනට තියෙන සම්පූර්ණ Stock මට්ටම්:")
+        st.subheader("🏬 Warehouse Stock (DCW1 - Rice Only)")
+        st.caption("Warehouse (DCW1) එකේ දැනට තියෙන Rice Items වල Stock මට්ටම්:")
 
-        if not warehouse_df.empty:
-            wh_display_cols = ['SKU', item_column, 'Category', 'Current Stock On Hand Units', 'Material Status Description']
-            valid_wh_cols = [col for col in wh_display_cols if col in warehouse_df.columns]
+        # Warehouse DataFrame එකෙන් 'Rice' Category එක විතරක් Filter කිරීම
+        wh_rice_df = warehouse_df[warehouse_df['Category'] == 'Rice']
 
-            clean_wh_df = warehouse_df[valid_wh_cols].reset_index(drop=True)
-            clean_wh_df.columns = [col.replace('Current Stock On Hand Units', 'Stock On Hand') for col in clean_wh_df.columns]
+        if not wh_rice_df.empty:
+            # Item Code / Item Description / SIH Columns 3 විතරක් තෝරා ගැනීම
+            wh_display_cols = ['SKU', item_column, 'Current Stock On Hand Units']
+            valid_wh_cols = [col for col in wh_display_cols if col in wh_rice_df.columns]
+
+            clean_wh_df = wh_rice_df[valid_wh_cols].reset_index(drop=True)
+            
+            # Column Names එක ලස්සනට Rename කිරීම
+            clean_wh_df.columns = ['Item Code', 'Item Description', 'SIH']
 
             st.dataframe(clean_wh_df, use_container_width=True)
 
             csv_wh = clean_wh_df.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📥 Download Warehouse Stock Report (CSV)",
+                label="📥 Download Warehouse Rice Stock Report (CSV)",
                 data=csv_wh,
-                file_name="Warehouse_Stock_DCW1.csv",
+                file_name="Warehouse_Rice_Stock_DCW1.csv",
                 mime="text/csv"
             )
         else:
-            st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Data හමු වූයේ නැත.")
+            st.warning("⚠️ Warehouse (DCW1) එකේ Rice Items හමු වූයේ නැත.")
 
     # Sidebar Refresh
     st.sidebar.markdown("---")
