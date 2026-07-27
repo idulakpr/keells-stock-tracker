@@ -249,7 +249,7 @@ elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
                     except Exception as e:
                         st.error(f"Error deleting data: {e}")
 
-# ================= 3. HISTORICAL OOS TREND ANALYSIS (UPDATED GRAPH FEATURE) =================
+# ================= 3. HISTORICAL OOS TREND ANALYSIS (UPDATED WITH CATEGORIES) =================
 elif main_menu == "📈 Historical OOS Trend Analysis":
     st.subheader("📈 Historical OOS Trend Analysis")
     
@@ -299,68 +299,77 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                 # --- MODE 1: ITEM WISE ---
                 if "Item-wise" in analysis_mode:
-                    all_items = sorted(sample_df[item_col].dropna().unique().tolist())
-                    selected_item = st.selectbox("📦 Filter by Item:", all_items)
+                    # 📂 Category එක තෝරා ගැනීමට Filter එකක් එකතු කිරීම
+                    selected_cat = st.radio("📂 Category එක තෝරන්න:", ["Dairies", "Rice"], horizontal=True, key="trend_cat_filter")
+                    
+                    # අදාළ Category එකට අදාළ Items පමණක් Filter කරගැනීම
+                    cat_sample_df = sample_df[sample_df['Category'] == selected_cat]
+                    all_items = sorted(cat_sample_df[item_col].dropna().unique().tolist())
+                    
+                    if not all_items:
+                        st.warning(f"⚠️ {selected_cat} Category එකට අදාළ Items හමු වූයේ නැත.")
+                    else:
+                        selected_item = st.selectbox(f"📦 Filter by {selected_cat} Item:", all_items)
 
-                    if st.button("🚀 Generate Item OOS Trend Graph"):
-                        with st.spinner("Analyzing OOS history across selected dates..."):
-                            trend_data = []
+                        if st.button("🚀 Generate Item OOS Trend Graph"):
+                            with st.spinner("Analyzing OOS history across selected dates..."):
+                                trend_data = []
 
-                            for badge in filtered_badges:
-                                batch_df = fetch_all_batch_data(badge)
-                                if not batch_df.empty:
-                                    wh_mask = batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
-                                    outlets_b_df = batch_df[~wh_mask]
-                                    
-                                    if 'Current_Stock_Units' in outlets_b_df.columns:
-                                        outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
+                                for badge in filtered_badges:
+                                    batch_df = fetch_all_batch_data(badge)
+                                    if not batch_df.empty:
+                                        wh_mask = batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
+                                        outlets_b_df = batch_df[~wh_mask]
+                                        
+                                        if 'Current_Stock_Units' in outlets_b_df.columns:
+                                            outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                                    item_df = outlets_b_df[(outlets_b_df[item_col] == selected_item) & (outlets_b_df['Current_Stock_Units'] <= 0)]
-                                    
-                                    oos_outlets_list = sorted(item_df[store_c].dropna().unique().tolist())
-                                    oos_count = len(oos_outlets_list)
-                                    
-                                    trend_data.append({
-                                        "Batch / Date": badge,
-                                        "OOS Outlets Count": oos_count,
-                                        "OOS Outlets List": ", ".join(oos_outlets_list) if oos_outlets_list else "None"
-                                    })
+                                        item_df = outlets_b_df[(outlets_b_df[item_col] == selected_item) & (outlets_b_df['Current_Stock_Units'] <= 0)]
+                                        
+                                        oos_outlets_list = sorted(item_df[store_c].dropna().unique().tolist())
+                                        oos_count = len(oos_outlets_list)
+                                        
+                                        trend_data.append({
+                                            "Batch / Date": badge,
+                                            "OOS Outlets Count": oos_count,
+                                            "OOS Outlets List": ", ".join(oos_outlets_list) if oos_outlets_list else "None"
+                                        })
 
-                            chart_df = pd.DataFrame(trend_data)
+                                chart_df = pd.DataFrame(trend_data)
 
-                            if not chart_df.empty:
-                                oos_days = len(chart_df[chart_df["OOS Outlets Count"] > 0])
-                                max_peak = chart_df["OOS Outlets Count"].max()
+                                if not chart_df.empty:
+                                    oos_days = len(chart_df[chart_df["OOS Outlets Count"] > 0])
+                                    max_peak = chart_df["OOS Outlets Count"].max()
 
-                                st.markdown("---")
-                                m1, m2, m3 = st.columns(3)
-                                m1.metric("Checked Batches", f"{len(chart_df)}")
-                                m2.metric("OOS Occurred Batches", f"{oos_days} Batches", delta_color="inverse")
-                                m3.metric("Max OOS Outlets Peak", f"{max_peak} Outlets")
+                                    st.markdown("---")
+                                    m1, m2, m3 = st.columns(3)
+                                    m1.metric("Checked Batches", f"{len(chart_df)}")
+                                    m2.metric("OOS Occurred Batches", f"{oos_days} Batches", delta_color="inverse")
+                                    m3.metric("Max OOS Outlets Peak", f"{max_peak} Outlets")
 
-                                # Line Graph with Markers
-                                st.subheader(f"📈 OOS Outlet Trend - {selected_item}")
-                                fig = px.line(
-                                    chart_df, 
-                                    x="Batch / Date", 
-                                    y="OOS Outlets Count",
-                                    text="OOS Outlets Count",
-                                    markers=True,
-                                    labels={"OOS Outlets Count": "Number of Outlets OOS", "Batch / Date": "Upload Batch / Date"}
-                                )
-                                fig.update_traces(
-                                    line_color='#00a896', 
-                                    line_width=4, 
-                                    marker=dict(size=10, symbol='circle'),
-                                    textposition='top center'
-                                )
-                                fig.update_layout(xaxis_tickangle=-45, yaxis=dict(zeroline=True))
+                                    # Line Graph with Markers
+                                    st.subheader(f"📈 OOS Outlet Trend - {selected_item}")
+                                    fig = px.line(
+                                        chart_df, 
+                                        x="Batch / Date", 
+                                        y="OOS Outlets Count",
+                                        text="OOS Outlets Count",
+                                        markers=True,
+                                        labels={"OOS Outlets Count": "Number of Outlets OOS", "Batch / Date": "Upload Batch / Date"}
+                                    )
+                                    fig.update_traces(
+                                        line_color='#00a896', 
+                                        line_width=4, 
+                                        marker=dict(size=10, symbol='circle'),
+                                        textposition='top center'
+                                    )
+                                    fig.update_layout(xaxis_tickangle=-45, yaxis=dict(zeroline=True))
 
-                                st.plotly_chart(fig, use_container_width=True)
+                                    st.plotly_chart(fig, use_container_width=True)
 
-                                # Detailed Table with Outlet List
-                                st.subheader("📋 Batch-wise OOS Outlet Details")
-                                st.dataframe(chart_df, use_container_width=True)
+                                    # Detailed Table with Outlet List
+                                    st.subheader("📋 Batch-wise OOS Outlet Details")
+                                    st.dataframe(chart_df, use_container_width=True)
 
                 # --- MODE 2: OUTLET WISE ---
                 else:
