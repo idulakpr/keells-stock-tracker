@@ -27,6 +27,30 @@ def categorize_by_sku(sku):
         return 'Dairies'
     return 'Rice'
 
+# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX (PAGINATION) ---
+def fetch_all_batch_data(selected_batch):
+    all_rows = []
+    page_size = 1000
+    start = 0
+    
+    while True:
+        # 1000 බැගින් Loop එකක් හරහා සෙරම Data ගෙන්න ගැනීම
+        res = supabase.table('stock_history') \
+            .select('*') \
+            .eq('Uploaded_At', selected_batch) \
+            .range(start, start + page_size - 1) \
+            .execute()
+        
+        data = res.data
+        if not data:
+            break
+        all_rows.extend(data)
+        if len(data) < page_size:
+            break
+        start += page_size
+        
+    return pd.DataFrame(all_rows)
+
 # --- NAVIGATION MENU ---
 st.markdown("### 📌 Navigation Menu")
 main_menu = st.radio(
@@ -144,17 +168,19 @@ else:
             timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
             selected_batch = st.selectbox("📅 Select Stock Upload Batch/Time History:", timestamps)
 
-            data_resp = supabase.table('stock_history').select('*').eq('Uploaded_At', selected_batch).execute()
-            df = pd.DataFrame(data_resp.data)
+            with st.spinner("Fetching full stock records from database..."):
+                # 🛠️ Supabase 1000 Row Limit එක Bypass කර සම්පූර්ණ Data ප්‍රමාණයම Fetch කිරීම
+                df = fetch_all_batch_data(selected_batch)
 
             if not df.empty:
-                # 🛠️ 1. Force Clean Stock Units to Numeric
+                # 1. Clean Stock Units to Numeric
                 if 'Current_Stock_Units' in df.columns:
                     df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                # 🛠️ 2. Force Recalculate Category live on retrieved data using SKU
+                # 2. SKU clean and Live Category Assignment
                 if 'SKU' in df.columns:
-                    df['Category'] = df['SKU'].astype(str).apply(categorize_by_sku)
+                    df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
+                    df['Category'] = df['SKU'].apply(categorize_by_sku)
 
                 store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
                 item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
