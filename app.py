@@ -34,7 +34,6 @@ def fetch_all_batch_data(selected_batch):
     start = 0
     
     while True:
-        # 1000 බැගින් Loop එකක් හරහා සෙරම Data ගෙන්න ගැනීම
         res = supabase.table('stock_history') \
             .select('*') \
             .eq('Uploaded_At', selected_batch) \
@@ -169,7 +168,6 @@ else:
             selected_batch = st.selectbox("📅 Select Stock Upload Batch/Time History:", timestamps)
 
             with st.spinner("Fetching full stock records from database..."):
-                # 🛠️ Supabase 1000 Row Limit එක Bypass කර සම්පූර්ණ Data ප්‍රමාණයම Fetch කිරීම
                 df = fetch_all_batch_data(selected_batch)
 
             if not df.empty:
@@ -234,15 +232,21 @@ else:
                             st.success(f"✅ මේ {category_name} Category එකේ කිසිම Outlet එකක් Zero Stock වී නැත.")
                             return
 
-                        st.error(f"🚨 Outlets / Items {len(zero_df)} ක් Zero Stock වී ඇත!")
-
+                        # 1. Item Dropdown Filter
                         cat_items = ["-- All Zero Stock Items --"] + sorted(zero_df[item_column].dropna().unique().tolist())
                         selected_zero_item = st.selectbox(f"🔍 Filter by {category_name} Item (Optional):", cat_items, key=f"zero_{category_name}")
 
                         display_df = zero_df.copy()
+                        
+                        # 2. Dynamic Count & Alert Message according to selected item
                         if selected_zero_item != "-- All Zero Stock Items --":
                             display_df = display_df[display_df[item_column] == selected_zero_item]
+                            outlet_count = len(display_df)
+                            st.error(f"🚨 **{selected_zero_item}** Item එක Outlets **{outlet_count}** ක Zero Stock වී ඇත!")
+                        else:
+                            st.error(f"🚨 Outlets / Items **{len(zero_df)}** ක් Zero Stock වී ඇත!")
 
+                        # 3. Display Data Table
                         display_cols = [store_desc_col, 'SKU', item_column, 'Current_Stock_Units', 'Material_Status_Desc']
                         available_disp = [c for c in display_cols if c in display_df.columns]
                         
