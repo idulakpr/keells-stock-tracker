@@ -28,7 +28,8 @@ try:
 
     # Column identifications
     item_column = 'SKU Description' if 'SKU Description' in df.columns else df.columns[0]
-    store_column = 'Store Description' if 'Store Description' in df.columns else 'Store'
+    store_desc_col = 'Store Description' if 'Store Description' in df.columns else 'Store'
+    store_code_col = 'Store' if 'Store' in df.columns else store_desc_col
 
     # --- CATEGORIZATION BY SKU CODE ---
     dairy_skus = ['115281', '115282', '115283', '5285', '44132', '126507', '128484', '120115']
@@ -41,13 +42,13 @@ try:
 
     df['Category'] = df.apply(categorize_by_sku, axis=1)
 
-    # --- WAREHOUSE FILTER (DCW1) ---
-    warehouse_mask = df[store_column].astype(str).str.strip().str.upper() == 'DCW1'
+    # --- WAREHOUSE FILTER (Checking 'Store' Column for DCW1) ---
+    warehouse_mask = df[store_code_col].astype(str).str.strip().str.upper() == 'DCW1'
     
     warehouse_df = df[warehouse_mask]
     outlets_df = df[~warehouse_mask]
 
-    # --- VERTICAL MENU SELECTION (පහළට එක යට එක) ---
+    # --- VERTICAL MENU SELECTION ---
     st.markdown("### 📌 Navigation Menu")
     main_menu = st.radio(
         "ඔයාට අවශ්‍ය Option එක තෝරන්න:",
@@ -59,10 +60,10 @@ try:
 
     # ================= 1. OUTLET STOCK SEARCH =================
     if main_menu == "🔍 Outlet Stock Search":
-        outlets = sorted(outlets_df[store_column].dropna().unique())
+        outlets = sorted(outlets_df[store_desc_col].dropna().unique())
         selected_outlet = st.selectbox("📍 Select Outlet / Store", outlets)
 
-        outlet_data = outlets_df[outlets_df[store_column] == selected_outlet]
+        outlet_data = outlets_df[outlets_df[store_desc_col] == selected_outlet]
 
         items = sorted(outlet_data[item_column].dropna().unique())
         selected_item = st.selectbox("📦 Select Item", items)
@@ -76,7 +77,7 @@ try:
         
         col1, col2 = st.columns(2)
         with col1:
-            st.write(f"🏢 **Store Description:** {item_details.get(store_column, 'N/A')}")
+            st.write(f"🏢 **Store:** {item_details.get(store_code_col, 'N/A')} - {item_details.get(store_desc_col, 'N/A')}")
             st.write(f"📊 **Current Stock On Hand:** `{item_details.get('Current Stock On Hand Units', 0)}` Units")
             st.write(f"🔄 **Last Update Time:** {item_details.get('Last Update Date Time', 'N/A')}")
 
@@ -106,7 +107,7 @@ try:
             if not zero_df.empty:
                 st.error(f"🚨 Outlets {len(zero_df)} ක මේ Item එක Zero Stock වී ඇත!")
 
-                display_cols = [store_column, 'SKU', 'Current Stock On Hand Units', 'Material Status Description']
+                display_cols = [store_desc_col, 'SKU', 'Current Stock On Hand Units', 'Material Status Description']
                 valid_cols = [col for col in display_cols if col in zero_df.columns]
                 
                 report_df = zero_df[valid_cols].reset_index(drop=True)
@@ -133,7 +134,7 @@ try:
 
     # ================= 3. WAREHOUSE STOCK =================
     elif main_menu == "🏬 Warehouse Stock":
-        st.subheader("🏬 Warehouse Stock (DCW1)")
+        st.subheader("🏬 Warehouse Stock (DCW1 - Kerawalapitiya)")
         st.caption("Warehouse (DCW1) එකේ දැනට තියෙන සම්පූර්ණ Stock මට්ටම්:")
 
         if not warehouse_df.empty:
