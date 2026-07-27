@@ -14,7 +14,6 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     
-    # Default admin password set in secrets or fallback to 'admin123'
     ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
 except Exception as e:
     st.error("⚠️ Database connection settings (Secrets) සකසා නොමැත!")
@@ -52,7 +51,7 @@ def categorize_by_sku(sku):
         return 'Dairies'
     return 'Rice'
 
-# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX FOR DATA FETCHING ---
+# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX (PAGINATION) ---
 def fetch_all_batch_data(selected_batch):
     all_rows = []
     page_size = 1000
@@ -105,7 +104,29 @@ if main_menu == "📤 Upload New Stock (Memorize)":
     
     # Passcode Check
     if check_admin_password():
-        st.caption("මෙහිදී Upload කරන හැම Excel එකක්ම Database එකේ Time-stamp එකත් එක්ක Memorize වෙනවා.")
+        st.caption("මෙතැනින් ඔයාගේ Stock Date එක සහ Batch එක තෝරලා Excel File එක Upload කරන්න.")
+
+        # --- NEW: User Input for Date & Batch Sequence ---
+        col_date, col_slot = st.columns(2)
+        with col_date:
+            upload_date = st.date_input("📅 Stock Data අදාළ දිනය (Date):", datetime.date.today())
+        
+        with col_slot:
+            batch_num = st.selectbox(
+                "🔢 අද දවසේ කීවෙනි Upload එකද? (Batch Number):", 
+                ["Batch 1", "Batch 2", "Batch 3", "Batch 4", "Batch 5"]
+            )
+        
+        custom_note = st.text_input("📝 වෙනත් සටහනක් (Optional Note - e.g. Evening Update):", "")
+
+        # Generate Unique Badge/Tag Name
+        date_str = upload_date.strftime("%Y-%m-%d")
+        if custom_note.strip():
+            badge_name = f"{date_str} - {batch_num} ({custom_note.strip()})"
+        else:
+            badge_name = f"{date_str} - {batch_num}"
+
+        st.info(f"🏷️ **මෙම File එක Save වන Badge එක:** `{badge_name}`")
 
         uploaded_file = st.file_uploader("Choose App.xlsx file", type=["xlsx", "xls"])
 
@@ -136,9 +157,8 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                         if 'Current_Stock_Units' in df.columns:
                             df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                        # 5. Timestamp
-                        upload_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        df['Uploaded_At'] = upload_timestamp
+                        # 5. User-Selected Badge/Tag
+                        df['Uploaded_At'] = badge_name
 
                         # 6. Database එකේ තියෙන Columns විතරක් Select කරගැනීම
                         valid_db_columns = [
@@ -161,7 +181,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                             chunk = records[i:i + chunk_size]
                             supabase.table('stock_history').insert(chunk).execute()
 
-                        st.success(f"✅ Data successfully Memorized at {upload_timestamp}!")
+                        st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'!")
                         st.balloons()
                     except Exception as e:
                         st.error(f"Error Uploading to Database: {e}")
@@ -173,7 +193,6 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
     # Passcode Check
     if check_admin_password():
         try:
-            # FIX: Limit eka wadi kara raw 1000 cap eka bypass karanna
             response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
             raw_data = response.data
 
@@ -182,14 +201,14 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
             else:
                 timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
                 
-                selected_delete_batch = st.selectbox("❌ Delete කරන්න අවශ්‍ය Upload Batch (Timestamp) එක තෝරන්න:", timestamps)
+                selected_delete_batch = st.selectbox("❌ Delete කරන්න අවශ්‍ය Upload Batch / Badge එක තෝරන්න:", timestamps)
 
-                st.warning(f"⚠️ ඔබ තෝරාගත් Batch එක (`{selected_delete_batch}`) ස්ථිරවම Database එකෙන් Delete වනු ඇත.")
+                st.warning(f"⚠️ ඔබ තෝරාගත් Badge එක (`{selected_delete_batch}`) ස්ථිරවම Database එකෙන් Delete වනු ඇත.")
                 
                 if st.button("🔴 Delete Selected Batch"):
                     with st.spinner("Deleting Batch from Database..."):
                         supabase.table('stock_history').delete().eq('Uploaded_At', selected_delete_batch).execute()
-                        st.success(f"✅ Batch '{selected_delete_batch}' සාර්ථකව Delete කරන ලදී!")
+                        st.success(f"✅ Badge '{selected_delete_batch}' සාර්ථකව Delete කරන ලදී!")
                         st.rerun()
 
         except Exception as e:
@@ -198,7 +217,6 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
 # ================= DATA RETRIEVAL LOGIC FOR PUBLIC TABS =================
 else:
     try:
-        # FIX: Limit eka wadi kara raw 1000 cap eka bypass karanna
         response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
         raw_data = response.data
 
@@ -206,7 +224,7 @@ else:
             st.warning("⚠️ Database එකේ කිසිම Data එකක් නෑ. කරුණාකර පළමුව Excel File එකක් Upload කරන්න.")
         else:
             timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
-            selected_batch = st.selectbox("📅 Select Stock Upload Batch/Time History:", timestamps)
+            selected_batch = st.selectbox("📅 Select Stock Upload Batch / Date History:", timestamps)
 
             with st.spinner("Fetching full stock records from database..."):
                 df = fetch_all_batch_data(selected_batch)
@@ -251,7 +269,7 @@ else:
                             with col1:
                                 st.write(f"🏢 **Store:** {item_details.get(store_desc_col, 'N/A')}")
                                 st.write(f"📊 **Current Stock On Hand:** `{item_details.get('Current_Stock_Units', 0)}` Units")
-                                st.write(f"🔄 **Excel Last Update:** {item_details.get('Last_Update_Time', 'N/A')}")
+                                st.write(f"🔄 **System Last Update Time:** {item_details.get('Last_Update_Time', 'N/A')}")
 
                             with col2:
                                 st.write(f"⚙️ **Category:** {item_details.get('Category', 'N/A')}")
