@@ -74,15 +74,34 @@ def fetch_all_batch_data(selected_batch):
         
     return pd.DataFrame(all_rows)
 
-# --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES/TIMESTAMPS ---
+# --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES (SUPABASE 1000 LIMIT FIX) ---
 def get_unique_badges():
     try:
-        response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
-        raw_data = response.data
-        if raw_data:
-            df_temp = pd.DataFrame(raw_data)
-            return sorted(df_temp['Uploaded_At'].dropna().unique().tolist(), reverse=True)
-        return []
+        all_badges = set()
+        page_size = 1000
+        start = 0
+        
+        # Paginate through DB records to ensure all distinct Uploaded_At badges are fetched
+        while True:
+            response = supabase.table('stock_history') \
+                .select('Uploaded_At') \
+                .range(start, start + page_size - 1) \
+                .execute()
+            
+            raw_data = response.data
+            if not raw_data:
+                break
+                
+            for row in raw_data:
+                if row.get('Uploaded_At'):
+                    all_badges.add(row['Uploaded_At'])
+            
+            if len(raw_data) < page_size:
+                break
+                
+            start += page_size
+            
+        return sorted(list(all_badges), reverse=True)
     except Exception as e:
         return []
 
@@ -208,6 +227,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     
                     st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'! Total Rows: {total_records}")
                     st.balloons()
+                    st.rerun()
                     
                 except Exception as e:
                     status_text.empty()
