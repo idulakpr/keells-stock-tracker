@@ -26,6 +26,20 @@ try:
     file_mtime = get_file_mtime(FILE_NAME)
     df = load_data(file_mtime)
 
+    item_column = 'SKU Description' if 'SKU Description' in df.columns else df.columns[0]
+
+    # --- CATEGORY CLASSIFICATION FUNCTION ---
+    def categorize_item(item_name):
+        name_upper = str(item_name).upper()
+        dairy_keywords = ['CURD', 'YOGHURT', 'CREAMOO', 'DAIRY', 'CIC']
+        if any(keyword in name_upper for keyword in dairy_keywords):
+            return 'Dairies'
+        else:
+            return 'Rice'
+
+    # DataFrame එකට Category column එකක් එකතු කිරීම
+    df['Category'] = df[item_column].apply(categorize_item)
+
     # --- TABS FOR NAVIGATION ---
     tab1, tab2 = st.tabs(["🔍 Outlet Stock Search", "⚠️ Zero Stock Report"])
 
@@ -36,7 +50,6 @@ try:
 
         outlet_df = df[df['Store Description'] == selected_outlet]
 
-        item_column = 'SKU Description' if 'SKU Description' in df.columns else df.columns[0]
         items = sorted(outlet_df[item_column].dropna().unique())
         selected_item = st.selectbox("📦 Select Item", items)
 
@@ -61,39 +74,50 @@ try:
     # ================= TAB 2: ZERO STOCK REPORT =================
     with tab2:
         st.subheader("📋 Item-wise Zero Stock Outlets")
-        st.caption("තෝරන Item එක සඳහා Stock 0 තියෙන Outlets ලැයිස්තුව:")
-
-        item_column = 'SKU Description' if 'SKU Description' in df.columns else df.columns[0]
-        all_items = sorted(df[item_column].dropna().unique())
         
-        selected_zero_item = st.selectbox("📦 Select Item for Zero Stock Check", all_items, key="zero_item")
+        # --- SUB TABS FOR DAIRY & RICE ---
+        sub_tab1, sub_tab2 = st.tabs(["🥛 Dairies", "🍚 Rice"])
 
-        # Stock <= 0 තියෙන Outlets Filter කිරීම
-        zero_df = df[(df[item_column] == selected_zero_item) & (df['Current Stock On Hand Units'] <= 0)]
-
-        if not zero_df.empty:
-            st.error(f"🚨 Outlets {len(zero_df)} ක මේ Item එක Zero Stock වී ඇත!")
-
-            # පෙන්විය යුතු Columns ටික විතරක් තෝරා ගැනීම
-            display_cols = ['Store Description', 'SKU', 'Current Stock On Hand Units', 'Material Status Description']
-            valid_cols = [col for col in display_cols if col in zero_df.columns]
+        def render_zero_stock_section(category_name):
+            cat_df = df[df['Category'] == category_name]
+            cat_items = sorted(cat_df[item_column].dropna().unique())
             
-            report_df = zero_df[valid_cols].reset_index(drop=True)
-            report_df.columns = [col.replace('Current Stock On Hand Units', 'Stock On Hand') for col in report_df.columns]
+            if not cat_items:
+                st.info(f"No items found in {category_name} category.")
+                return
 
-            # Table එක පෙන්වීම
-            st.dataframe(report_df, use_container_width=True)
+            selected_zero_item = st.selectbox(f"📦 Select {category_name} Item", cat_items, key=f"zero_{category_name}")
 
-            # CSV Download Button එක
-            csv = report_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Zero Stock Report (CSV)",
-                data=csv,
-                file_name=f"Zero_Stock_{selected_zero_item}.csv",
-                mime="text/csv",
-            )
-        else:
-            st.success("✅ නියමයි! මේ Item එක හැම Outlet එකකම Stock තියෙනවා (Zero Stock Outlets නැත).")
+            # Stock <= 0 තියෙන Outlets Filter කිරීම
+            zero_df = cat_df[(cat_df[item_column] == selected_zero_item) & (cat_df['Current Stock On Hand Units'] <= 0)]
+
+            if not zero_df.empty:
+                st.error(f"🚨 Outlets {len(zero_df)} ක මේ Item එක Zero Stock වී ඇත!")
+
+                display_cols = ['Store Description', 'SKU', 'Current Stock On Hand Units', 'Material Status Description']
+                valid_cols = [col for col in display_cols if col in zero_df.columns]
+                
+                report_df = zero_df[valid_cols].reset_index(drop=True)
+                report_df.columns = [col.replace('Current Stock On Hand Units', 'Stock On Hand') for col in report_df.columns]
+
+                st.dataframe(report_df, use_container_width=True)
+
+                csv = report_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label=f"📥 Download {category_name} Zero Stock Report (CSV)",
+                    data=csv,
+                    file_name=f"Zero_Stock_{category_name}_{selected_zero_item}.csv",
+                    mime="text/csv",
+                    key=f"dl_{category_name}"
+                )
+            else:
+                st.success(f"✅ නියමයි! මේ {category_name} Item එක හැම Outlet එකකම Stock තියෙනවා.")
+
+        with sub_tab1:
+            render_zero_stock_section("Dairies")
+
+        with sub_tab2:
+            render_zero_stock_section("Rice")
 
     # Sidebar Refresh
     st.sidebar.markdown("---")
