@@ -48,7 +48,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                 try:
                     df = pd.read_excel(uploaded_file)
 
-                    # 🛠️ Float/NaN Out of range fix
+                    # Float/NaN Out of range fix
                     df = df.where(pd.notnull(df), None)
 
                     if 'SKU' in df.columns:
@@ -90,21 +90,20 @@ else:
             st.warning("⚠️ Database එකේ කිසිම Data එකක් නෑ. කරුණාකර පළමුව Excel File එකක් Upload කරන්න.")
         else:
             timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
-            
             selected_batch = st.selectbox("📅 Select Stock Upload Batch/Time History:", timestamps)
 
             data_resp = supabase.table('stock_history').select('*').eq('Uploaded_At', selected_batch).execute()
             df = pd.DataFrame(data_resp.data)
 
             if not df.empty:
-                # 🛠️ Convert Stock Column to Numeric safely
+                # Convert Stock Column to Numeric safely
                 if 'Current_Stock_Units' in df.columns:
                     df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
                 
                 store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
                 item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
 
-                # 🛠️ Flexible Warehouse Detection (Contains DCW1 or Kerawalapitiya)
+                # Filter Warehouse out of Outlets
                 warehouse_mask = (
                     df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
                     df.get('Plant', pd.Series()).astype(str).str.contains('DCW1', case=False, na=False)
@@ -139,34 +138,39 @@ else:
                             with col2:
                                 st.write(f"⚙️ **Category:** {item_details.get('Category', 'N/A')}")
                                 st.write(f"📝 **Status Description:** {item_details.get('Material_Status_Desc', 'N/A')}")
-                    else:
-                        st.info("Outlets කිසිවක් හමු වූයේ නැත.")
 
-                # ================= 3. ZERO STOCK REPORT =================
+                # ================= 3. ZERO STOCK REPORT (FIXED) =================
                 elif main_menu == "⚠️ Zero Stock Report":
-                    st.subheader(f"📋 Zero Stock Outlets ({selected_batch})")
+                    st.subheader(f"📋 Zero Stock Outlets Report ({selected_batch})")
                     sub_tab1, sub_tab2 = st.tabs(["🥛 Dairies", "🍚 Rice"])
 
                     def render_zero_stock_section(category_name):
                         cat_df = outlets_df[outlets_df['Category'] == category_name]
-                        cat_items = sorted(cat_df[item_column].dropna().unique())
                         
-                        if not cat_items:
-                            st.info(f"No items found in {category_name} category.")
+                        # Filter all zero/negative stock entries in this category
+                        zero_df = cat_df[cat_df['Current_Stock_Units'] <= 0]
+
+                        if zero_df.empty:
+                            st.success(f"✅ නියමයි! මේ {category_name} Category එකේ කිසිම Item එකක් Zero Stock වෙලා නෑ.")
                             return
 
-                        selected_zero_item = st.selectbox(f"📦 Select {category_name} Item", cat_items, key=f"zero_{category_name}")
-                        zero_df = cat_df[(cat_df[item_column] == selected_zero_item) & (cat_df['Current_Stock_Units'] <= 0)]
+                        st.error(f"🚨 මුළු Outlets / Items {len(zero_df)} ක් Zero Stock වී ඇත!")
 
-                        if not zero_df.empty:
-                            st.error(f"🚨 Outlets {len(zero_df)} ක මේ Item එක Zero Stock වී ඇත!")
-                            display_cols = [store_desc_col, 'SKU', 'Current_Stock_Units', 'Material_Status_Desc']
-                            available_disp = [c for c in display_cols if c in zero_df.columns]
-                            report_df = zero_df[available_disp].reset_index(drop=True)
+                        # Item Filter option (Optional)
+                        cat_items = ["-- All Zero Stock Items --"] + sorted(zero_df[item_column].dropna().unique().tolist())
+                        selected_zero_item = st.selectbox(f"🔍 Filter by {category_name} Item (Optional):", cat_items, key=f"zero_{category_name}")
 
-                            st.dataframe(report_df, use_container_width=True)
-                        else:
-                            st.success(f"✅ නියමයි! මේ {category_name} Item එක හැම Outlet එකකම Stock තියෙනවා.")
+                        display_df = zero_df.copy()
+                        if selected_zero_item != "-- All Zero Stock Items --":
+                            display_df = display_df[display_df[item_column] == selected_zero_item]
+
+                        display_cols = [store_desc_col, 'SKU', item_column, 'Current_Stock_Units', 'Material_Status_Desc']
+                        available_disp = [c for c in display_cols if c in display_df.columns]
+                        
+                        report_df = display_df[available_disp].reset_index(drop=True)
+                        report_df.columns = [c.replace('_', ' ') for c in available_disp]
+
+                        st.dataframe(report_df, use_container_width=True)
 
                     with sub_tab1:
                         render_zero_stock_section("Dairies")
@@ -185,7 +189,7 @@ else:
 
                         st.dataframe(clean_wh_df, use_container_width=True)
                     else:
-                        st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත. (Store Description එකේ DCW1 හෝ Kerawalapitiya තිබේදැයි බලන්න)")
+                        st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත.")
 
     except Exception as e:
         st.error(f"Error fetching data from database: {e}")
