@@ -249,7 +249,7 @@ elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
                     except Exception as e:
                         st.error(f"Error deleting data: {e}")
 
-# ================= 3. HISTORICAL OOS TREND ANALYSIS (UPDATED WITH CATEGORIES) =================
+# ================= 3. HISTORICAL OOS TREND ANALYSIS (UPDATED WITH CATEGORIES FOR BOTH) =================
 elif main_menu == "📈 Historical OOS Trend Analysis":
     st.subheader("📈 Historical OOS Trend Analysis")
     
@@ -299,10 +299,8 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                 # --- MODE 1: ITEM WISE ---
                 if "Item-wise" in analysis_mode:
-                    # 📂 Category එක තෝරා ගැනීමට Filter එකක් එකතු කිරීම
-                    selected_cat = st.radio("📂 Category එක තෝරන්න:", ["Dairies", "Rice"], horizontal=True, key="trend_cat_filter")
+                    selected_cat = st.radio("📂 Category එක තෝරන්න:", ["Dairies", "Rice"], horizontal=True, key="trend_cat_filter_item")
                     
-                    # අදාළ Category එකට අදාළ Items පමණක් Filter කරගැනීම
                     cat_sample_df = sample_df[sample_df['Category'] == selected_cat]
                     all_items = sorted(cat_sample_df[item_col].dropna().unique().tolist())
                     
@@ -373,66 +371,83 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                 # --- MODE 2: OUTLET WISE ---
                 else:
+                    selected_cat_outlet = st.radio("📂 Category එක තෝරන්න:", ["Dairies", "Rice"], horizontal=True, key="trend_cat_filter_outlet")
+                    
                     wh_mask_sample = sample_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
-                    all_outlets = sorted(sample_df[~wh_mask_sample][store_c].dropna().unique().tolist())
-                    selected_outlet = st.selectbox("🏬 Filter by Outlet / Store:", all_outlets)
+                    outlets_sample_df = sample_df[~wh_mask_sample]
+                    
+                    all_outlets = sorted(outlets_sample_df[store_c].dropna().unique().tolist())
+                    
+                    if not all_outlets:
+                        st.warning("⚠️ Outlets හමු වූයේ නැත.")
+                    else:
+                        selected_outlet = st.selectbox("🏬 Filter by Outlet / Store:", all_outlets)
 
-                    if st.button("🚀 Generate Outlet OOS Trend Graph"):
-                        with st.spinner("Analyzing OOS history across selected dates..."):
-                            trend_data = []
+                        if st.button("🚀 Generate Outlet OOS Trend Graph"):
+                            with st.spinner("Analyzing OOS history across selected dates..."):
+                                trend_data = []
 
-                            for badge in filtered_badges:
-                                batch_df = fetch_all_batch_data(badge)
-                                if not batch_df.empty:
-                                    if 'Current_Stock_Units' in batch_df.columns:
-                                        batch_df['Current_Stock_Units'] = pd.to_numeric(batch_df['Current_Stock_Units'], errors='coerce').fillna(0)
+                                for badge in filtered_badges:
+                                    batch_df = fetch_all_batch_data(badge)
+                                    if not batch_df.empty:
+                                        wh_mask_b = batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
+                                        outlets_b_df = batch_df[~wh_mask_b]
 
-                                    outlet_df = batch_df[(batch_df[store_c] == selected_outlet) & (batch_df['Current_Stock_Units'] <= 0)]
-                                    
-                                    oos_items_list = sorted(outlet_df[item_col].dropna().unique().tolist())
-                                    oos_count = len(oos_items_list)
-                                    
-                                    trend_data.append({
-                                        "Batch / Date": badge,
-                                        "OOS Items Count": oos_count,
-                                        "OOS Items List": ", ".join(oos_items_list) if oos_items_list else "None"
-                                    })
+                                        if 'Current_Stock_Units' in outlets_b_df.columns:
+                                            outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                            chart_df = pd.DataFrame(trend_data)
+                                        # Filter by store, category and zero stock
+                                        outlet_df = outlets_b_df[
+                                            (outlets_b_df[store_c] == selected_outlet) & 
+                                            (outlets_b_df['Category'] == selected_cat_outlet) & 
+                                            (outlets_b_df['Current_Stock_Units'] <= 0)
+                                        ]
+                                        
+                                        oos_items_list = sorted(outlet_df[item_col].dropna().unique().tolist())
+                                        oos_count = len(oos_items_list)
+                                        
+                                        trend_data.append({
+                                            "Batch / Date": badge,
+                                            f"OOS {selected_cat_outlet} Items Count": oos_count,
+                                            "OOS Items List": ", ".join(oos_items_list) if oos_items_list else "None"
+                                        })
 
-                            if not chart_df.empty:
-                                oos_days = len(chart_df[chart_df["OOS Items Count"] > 0])
-                                max_peak = chart_df["OOS Items Count"].max()
+                                chart_df = pd.DataFrame(trend_data)
 
-                                st.markdown("---")
-                                m1, m2, m3 = st.columns(3)
-                                m1.metric("Checked Batches", f"{len(chart_df)}")
-                                m2.metric("OOS Occurred Batches", f"{oos_days} Batches", delta_color="inverse")
-                                m3.metric("Max OOS Items Peak", f"{max_peak} Items")
+                                if not chart_df.empty:
+                                    count_col_name = f"OOS {selected_cat_outlet} Items Count"
+                                    oos_days = len(chart_df[chart_df[count_col_name] > 0])
+                                    max_peak = chart_df[count_col_name].max()
 
-                                # Line Graph with Markers
-                                st.subheader(f"📈 OOS Item Trend - {selected_outlet}")
-                                fig = px.line(
-                                    chart_df, 
-                                    x="Batch / Date", 
-                                    y="OOS Items Count",
-                                    text="OOS Items Count",
-                                    markers=True,
-                                    labels={"OOS Items Count": "Number of Items OOS", "Batch / Date": "Upload Batch / Date"}
-                                )
-                                fig.update_traces(
-                                    line_color='#e63946', 
-                                    line_width=4, 
-                                    marker=dict(size=10, symbol='circle'),
-                                    textposition='top center'
-                                )
-                                fig.update_layout(xaxis_tickangle=-45, yaxis=dict(zeroline=True))
+                                    st.markdown("---")
+                                    m1, m2, m3 = st.columns(3)
+                                    m1.metric("Checked Batches", f"{len(chart_df)}")
+                                    m2.metric("OOS Occurred Batches", f"{oos_days} Batches", delta_color="inverse")
+                                    m3.metric(f"Max OOS {selected_cat_outlet} Peak", f"{max_peak} Items")
 
-                                st.plotly_chart(fig, use_container_width=True)
+                                    # Line Graph with Markers
+                                    st.subheader(f"📈 OOS Trend ({selected_cat_outlet}) - {selected_outlet}")
+                                    fig = px.line(
+                                        chart_df, 
+                                        x="Batch / Date", 
+                                        y=count_col_name,
+                                        text=count_col_name,
+                                        markers=True,
+                                        labels={count_col_name: f"Number of {selected_cat_outlet} Items OOS", "Batch / Date": "Upload Batch / Date"}
+                                    )
+                                    fig.update_traces(
+                                        line_color='#e63946', 
+                                        line_width=4, 
+                                        marker=dict(size=10, symbol='circle'),
+                                        textposition='top center'
+                                    )
+                                    fig.update_layout(xaxis_tickangle=-45, yaxis=dict(zeroline=True))
 
-                                # Detailed Table with Item List
-                                st.subheader("📋 Batch-wise OOS Item Details")
-                                st.dataframe(chart_df, use_container_width=True)
+                                    st.plotly_chart(fig, use_container_width=True)
+
+                                    # Detailed Table with Item List
+                                    st.subheader("📋 Batch-wise OOS Item Details")
+                                    st.dataframe(chart_df, use_container_width=True)
 
 # ================= 4. FAST LATEST DATA RETRIEVAL FOR DAILY DASHBOARDS =================
 else:
