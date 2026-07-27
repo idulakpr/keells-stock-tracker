@@ -148,11 +148,13 @@ else:
             df = pd.DataFrame(data_resp.data)
 
             if not df.empty:
+                # 🛠️ 1. Force Clean Stock Units to Numeric
                 if 'Current_Stock_Units' in df.columns:
                     df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
-                
+
+                # 🛠️ 2. Force Recalculate Category live on retrieved data using SKU
                 if 'SKU' in df.columns:
-                    df['Category'] = df['SKU'].apply(categorize_by_sku)
+                    df['Category'] = df['SKU'].astype(str).apply(categorize_by_sku)
 
                 store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
                 item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
