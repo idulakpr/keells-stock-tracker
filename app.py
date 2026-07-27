@@ -100,13 +100,18 @@ def get_unique_badges():
             pass
         return []
 
-# --- HELPER FUNCTION TO CONVERT DATAFRAME TO EXCEL FOR DOWNLOAD ---
-def to_excel_download(df):
+# --- HELPER FUNCTION TO CONVERT MULTI-SHEET DATA TO EXCEL ---
+def download_multi_sheet_excel(summary_dict, detailed_df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='OOS_Trend_Report')
-    processed_data = output.getvalue()
-    return processed_data
+        # Sheet 1: Summary Metrics
+        summary_df = pd.DataFrame(list(summary_dict.items()), columns=['Metric', 'Value'])
+        summary_df.to_excel(writer, index=False, sheet_name='Summary_Metrics')
+        
+        # Sheet 2: Detailed OOS Data Table
+        detailed_df.to_excel(writer, index=False, sheet_name='Detailed_OOS_Data')
+        
+    return output.getvalue()
 
 # --- NAVIGATION MENU ---
 st.markdown("### 📌 Navigation Menu")
@@ -258,7 +263,7 @@ elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
                     except Exception as e:
                         st.error(f"Error deleting data: {e}")
 
-# ================= 3. HISTORICAL OOS TREND ANALYSIS (WITH ALL ITEMS/OUTLETS & EXCEL DOWNLOAD) =================
+# ================= 3. HISTORICAL OOS TREND ANALYSIS (WITH MULTI-SHEET EXCEL EXPORT) =================
 elif main_menu == "📈 Historical OOS Trend Analysis":
     st.subheader("📈 Historical OOS Trend Analysis")
     
@@ -330,7 +335,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                                         outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
 
                                     if selected_item == "-- All Items Combined (Total Category OOS) --":
-                                        # Filter for all zero stock items in selected category
                                         item_df = outlets_b_df[(outlets_b_df['Category'] == selected_cat) & (outlets_b_df['Current_Stock_Units'] <= 0)]
                                     else:
                                         item_df = outlets_b_df[(outlets_b_df[item_col] == selected_item) & (outlets_b_df['Current_Stock_Units'] <= 0)]
@@ -356,7 +360,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                                 m2.metric("OOS Occurred Batches", f"{oos_days} Batches", delta_color="inverse")
                                 m3.metric("Max OOS Outlets Peak", f"{max_peak} Outlets")
 
-                                # Line Graph with Markers
                                 label_title = "All Items Combined" if selected_item == "-- All Items Combined (Total Category OOS) --" else selected_item
                                 st.subheader(f"📈 OOS Outlet Trend - {label_title}")
                                 
@@ -378,16 +381,26 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                                 st.plotly_chart(fig, use_container_width=True)
 
-                                # Detailed Table with Outlet List
                                 st.subheader("📋 Batch-wise OOS Outlet Details")
                                 st.dataframe(chart_df, use_container_width=True)
 
-                                # --- EXCEL DOWNLOAD BUTTON ---
-                                excel_data = to_excel_download(chart_df)
+                                # --- MULTI-SHEET EXCEL REPORT PREPARATION & DOWNLOAD ---
+                                summary_metrics = {
+                                    "Analysis Type": "Item-wise OOS Analysis",
+                                    "Category": selected_cat,
+                                    "Selected Item": label_title,
+                                    "Start Date": str(start_date),
+                                    "End Date": str(end_date),
+                                    "Total Checked Batches": len(chart_df),
+                                    "OOS Occurred Batches": oos_days,
+                                    "Max OOS Outlets Peak": max_peak
+                                }
+                                
+                                excel_data = download_multi_sheet_excel(summary_metrics, chart_df)
                                 st.download_button(
-                                    label="📥 Download Trend Data as Excel (.xlsx)",
+                                    label="📥 Download Complete Report (Multi-Sheet Excel)",
                                     data=excel_data,
-                                    file_name=f"OOS_Trend_Item_{selected_cat}.xlsx",
+                                    file_name=f"OOS_Trend_Item_Report_{selected_cat}.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                                 )
 
@@ -417,7 +430,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                                         outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
 
                                     if selected_outlet == "-- All Outlets Combined (Total Chain OOS) --":
-                                        # Filter all stores for given category where stock <= 0
                                         outlet_df = outlets_b_df[
                                             (outlets_b_df['Category'] == selected_cat_outlet) & 
                                             (outlets_b_df['Current_Stock_Units'] <= 0)
@@ -451,7 +463,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                                 m2.metric("OOS Occurred Batches", f"{oos_days} Batches", delta_color="inverse")
                                 m3.metric(f"Max OOS {selected_cat_outlet} Peak", f"{max_peak} Items")
 
-                                # Line Graph with Markers
                                 label_outlet = "All Outlets Combined" if selected_outlet == "-- All Outlets Combined (Total Chain OOS) --" else selected_outlet
                                 st.subheader(f"📈 OOS Trend ({selected_cat_outlet}) - {label_outlet}")
                                 
@@ -473,16 +484,26 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                                 st.plotly_chart(fig, use_container_width=True)
 
-                                # Detailed Table with Item List
                                 st.subheader("📋 Batch-wise OOS Item Details")
                                 st.dataframe(chart_df, use_container_width=True)
 
-                                # --- EXCEL DOWNLOAD BUTTON ---
-                                excel_data = to_excel_download(chart_df)
+                                # --- MULTI-SHEET EXCEL REPORT PREPARATION & DOWNLOAD ---
+                                summary_metrics = {
+                                    "Analysis Type": "Outlet-wise OOS Analysis",
+                                    "Category": selected_cat_outlet,
+                                    "Selected Outlet": label_outlet,
+                                    "Start Date": str(start_date),
+                                    "End Date": str(end_date),
+                                    "Total Checked Batches": len(chart_df),
+                                    "OOS Occurred Batches": oos_days,
+                                    f"Max OOS {selected_cat_outlet} Peak": max_peak
+                                }
+                                
+                                excel_data = download_multi_sheet_excel(summary_metrics, chart_df)
                                 st.download_button(
-                                    label="📥 Download Trend Data as Excel (.xlsx)",
+                                    label="📥 Download Complete Report (Multi-Sheet Excel)",
                                     data=excel_data,
-                                    file_name=f"OOS_Trend_Outlet_{selected_cat_outlet}.xlsx",
+                                    file_name=f"OOS_Trend_Outlet_Report_{selected_cat_outlet}.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                                 )
 
