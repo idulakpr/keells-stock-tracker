@@ -52,7 +52,7 @@ def categorize_by_sku(sku):
         return 'Dairies'
     return 'Rice'
 
-# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX (PAGINATION) ---
+# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX FOR DATA FETCHING ---
 def fetch_all_batch_data(selected_batch):
     all_rows = []
     page_size = 1000
@@ -173,7 +173,8 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
     # Passcode Check
     if check_admin_password():
         try:
-            response = supabase.table('stock_history').select('Uploaded_At').execute()
+            # FIX: Limit eka wadi kara raw 1000 cap eka bypass karanna
+            response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
             raw_data = response.data
 
             if not raw_data:
@@ -197,7 +198,8 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
 # ================= DATA RETRIEVAL LOGIC FOR PUBLIC TABS =================
 else:
     try:
-        response = supabase.table('stock_history').select('Uploaded_At').execute()
+        # FIX: Limit eka wadi kara raw 1000 cap eka bypass karanna
+        response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
         raw_data = response.data
 
         if not raw_data:
