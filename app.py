@@ -80,34 +80,24 @@ def fetch_all_batch_data(selected_batch):
         
     return df
 
-# --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES ---
+# --- HELPER FUNCTION: FAST VIEW-BASED UNIQUE BADGES FETCH ---
 def get_unique_badges():
     try:
-        all_badges = set()
-        page_size = 1000
-        start = 0
-        
-        while True:
-            response = supabase.table('stock_history') \
-                .select('Uploaded_At') \
-                .range(start, start + page_size - 1) \
-                .execute()
-            
-            raw_data = response.data
-            if not raw_data:
-                break
-                
-            for row in raw_data:
-                if row.get('Uploaded_At'):
-                    all_badges.add(row['Uploaded_At'])
-            
-            if len(raw_data) < page_size:
-                break
-                
-            start += page_size
-            
-        return sorted(list(all_badges), reverse=True)
+        # DB එකේ Rows ලක්ෂ ගණනක් Scan කරන්නේ නැතුව View එක හරහා Instant Distinct Badges අදී
+        response = supabase.table('unique_badges_view').select('Uploaded_At').execute()
+        if response.data:
+            badges = [row['Uploaded_At'] for row in response.data if row.get('Uploaded_At')]
+            return sorted(badges, reverse=True)
+        return []
     except Exception as e:
+        # View එක සාදා නොමැති නම් Fallback එකක් ලෙස පැරණි Safe Direct Query එක ක්‍රියාත්මක වේ
+        try:
+            res = supabase.table('stock_history').select('Uploaded_At').execute()
+            if res.data:
+                badges = list(set([r['Uploaded_At'] for r in res.data if r.get('Uploaded_At')]))
+                return sorted(badges, reverse=True)
+        except:
+            pass
         return []
 
 # --- NAVIGATION MENU ---
