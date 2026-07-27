@@ -23,7 +23,6 @@ def categorize_by_sku(sku):
     sku_val = str(sku).replace('.0', '').strip()
     if sku_val in DAIRY_SKUS:
         return 'Dairies'
-    # Dairy SKU list එකේ නැති අනිත් සියලුම SKU 'Rice' ලෙස වර්ග කෙරේ
     return 'Rice'
 
 # --- NAVIGATION MENU ---
@@ -49,18 +48,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                 try:
                     df = pd.read_excel(uploaded_file)
 
-                    # Null/NaN Out of range fix
-                    df = df.where(pd.notnull(df), None)
-
-                    if 'SKU' in df.columns:
-                        df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-
-                    # Apply Category
-                    df['Category'] = df['SKU'].apply(categorize_by_sku)
-                    
-                    upload_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    df['Uploaded_At'] = upload_timestamp
-
+                    # 1. Clean Column Names First
                     rename_dict = {
                         'SKU Description': 'SKU_Description',
                         'Store Description': 'Store_Description',
@@ -69,6 +57,24 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                         'Last Update Date Time': 'Last_Update_Time'
                     }
                     df = df.rename(columns=rename_dict)
+
+                    # 2. Stock Column එක 100% Numeric කරගැනීම (0, None, Text ඔක්කොම Number වෙනවා)
+                    if 'Current_Stock_Units' in df.columns:
+                        df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
+
+                    # 3. Clean SKU
+                    if 'SKU' in df.columns:
+                        df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+                    # 4. Categorize
+                    df['Category'] = df['SKU'].apply(categorize_by_sku)
+                    
+                    # 5. Timestamp
+                    upload_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    df['Uploaded_At'] = upload_timestamp
+
+                    # 6. Null Fix for Supabase JSON compatibility
+                    df = df.where(pd.notnull(df), None)
 
                     records = df.to_dict(orient='records')
 
@@ -98,14 +104,14 @@ else:
             df = pd.DataFrame(data_resp.data)
 
             if not df.empty:
-                # Stock numbers numeric බවට හරවා ගැනීම
+                # Stock numbers numeric බව තහවුරු කිරීම
                 if 'Current_Stock_Units' in df.columns:
                     df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
                 
                 store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
                 item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
 
-                # Filter Warehouse
+                # Filter Warehouse Out
                 warehouse_mask = (
                     df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
                     df.get('Store', pd.Series()).astype(str).str.contains('DCW1', case=False, na=False)
@@ -149,14 +155,17 @@ else:
                     def render_zero_stock_section(category_name):
                         cat_df = outlets_df[outlets_df['Category'] == category_name]
                         
-                        # Stock 0 හෝ ඊට අඩු Outlets ෆිල්ටර් කිරීම
+                        # Stock 0 හෝ ඊට අඩු Outlets සියල්ල පෙන්නුම් කිරීම
                         zero_df = cat_df[cat_df['Current_Stock_Units'] <= 0]
 
+                        # Debug/Diagnostic Message: කිසිම දෙයක් පෙන්නන්නේ නැත්නම් Data ප්‍රමාණය බලාගන්න
+                        st.caption(f"Total `{category_name}` rows found: {len(cat_df)} | Zero stock rows: {len(zero_df)}")
+
                         if zero_df.empty:
-                            st.success(f"✅ නියමයි! මේ {category_name} Category එකේ කිසිම Item එකක් Zero Stock වී නැත.")
+                            st.success(f"✅ මේ {category_name} Category එකේ කිසිම Outlet එකක් Zero Stock වී නැත.")
                             return
 
-                        st.error(f"🚨 මුළු Outlets / Items {len(zero_df)} ක් Zero Stock වී ඇත!")
+                        st.error(f"🚨 Outlets / Items {len(zero_df)} ක් Zero Stock වී ඇත!")
 
                         cat_items = ["-- All Zero Stock Items --"] + sorted(zero_df[item_column].dropna().unique().tolist())
                         selected_zero_item = st.selectbox(f"🔍 Filter by {category_name} Item (Optional):", cat_items, key=f"zero_{category_name}")
@@ -194,4 +203,3 @@ else:
 
     except Exception as e:
         st.error(f"Error fetching data from database: {e}")
-               
