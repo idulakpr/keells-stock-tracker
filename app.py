@@ -51,7 +51,7 @@ def categorize_by_sku(sku):
         return 'Dairies'
     return 'Rice'
 
-# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX (PAGINATION) ---
+# --- HELPER FUNCTION: SUPABASE 1000 LIMIT FIX (PAGINATION FOR DATA FETCHING) ---
 def fetch_all_batch_data(selected_batch):
     all_rows = []
     page_size = 1000
@@ -73,6 +73,19 @@ def fetch_all_batch_data(selected_batch):
         start += page_size
         
     return pd.DataFrame(all_rows)
+
+# --- HELPER FUNCTION: FETCH ALL UNIQUE BADGES/TIMESTAMPS ---
+def get_unique_badges():
+    try:
+        # DB eke thiyena Badges list eka wena wenama fetch karanimata
+        response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
+        raw_data = response.data
+        if raw_data:
+            df_temp = pd.DataFrame(raw_data)
+            return sorted(df_temp['Uploaded_At'].dropna().unique().tolist(), reverse=True)
+        return []
+    except Exception as e:
+        return []
 
 # --- NAVIGATION MENU ---
 st.markdown("### 📌 Navigation Menu")
@@ -106,7 +119,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
     if check_admin_password():
         st.caption("මෙතැනින් ඔයාගේ Stock Date එක සහ Batch එක තෝරලා Excel File එක Upload කරන්න.")
 
-        # --- NEW: User Input for Date & Batch Sequence ---
+        # --- USER INPUT FOR DATE & BATCH SEQUENCE ---
         col_date, col_slot = st.columns(2)
         with col_date:
             upload_date = st.date_input("📅 Stock Data අදාළ දිනය (Date):", datetime.date.today())
@@ -157,7 +170,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                         if 'Current_Stock_Units' in df.columns:
                             df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                        # 5. User-Selected Badge/Tag
+                        # 5. User-Selected Badge Name
                         df['Uploaded_At'] = badge_name
 
                         # 6. Database එකේ තියෙන Columns විතරක් Select කරගැනීම
@@ -183,6 +196,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
 
                         st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'!")
                         st.balloons()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error Uploading to Database: {e}")
 
@@ -192,140 +206,132 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
     
     # Passcode Check
     if check_admin_password():
-        try:
-            response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
-            raw_data = response.data
+        timestamps = get_unique_badges()
 
-            if not raw_data:
-                st.info("ℹ️ Database එකේ කිසිම Data එකක් නැත.")
-            else:
-                timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
-                
-                selected_delete_batch = st.selectbox("❌ Delete කරන්න අවශ්‍ය Upload Batch / Badge එක තෝරන්න:", timestamps)
+        if not timestamps:
+            st.info("ℹ️ Database එකේ කිසිම Data එකක් නැත.")
+        else:
+            selected_delete_batch = st.selectbox("❌ Delete කරන්න අවශ්‍ය Upload Batch / Badge එක තෝරන්න:", timestamps)
 
-                st.warning(f"⚠️ ඔබ තෝරාගත් Badge එක (`{selected_delete_batch}`) ස්ථිරවම Database එකෙන් Delete වනු ඇත.")
-                
-                if st.button("🔴 Delete Selected Batch"):
-                    with st.spinner("Deleting Batch from Database..."):
+            st.warning(f"⚠️ ඔබ තෝරාගත් Badge එක (`{selected_delete_batch}`) ස්ථිරවම Database එකෙන් Delete වනු ඇත.")
+            
+            if st.button("🔴 Delete Selected Batch"):
+                with st.spinner("Deleting Batch from Database..."):
+                    try:
                         supabase.table('stock_history').delete().eq('Uploaded_At', selected_delete_batch).execute()
                         st.success(f"✅ Badge '{selected_delete_batch}' සාර්ථකව Delete කරන ලදී!")
                         st.rerun()
-
-        except Exception as e:
-            st.error(f"Error deleting data: {e}")
+                    except Exception as e:
+                        st.error(f"Error deleting data: {e}")
 
 # ================= DATA RETRIEVAL LOGIC FOR PUBLIC TABS =================
 else:
-    try:
-        response = supabase.table('stock_history').select('Uploaded_At').limit(50000).execute()
-        raw_data = response.data
+    timestamps = get_unique_badges()
 
-        if not raw_data:
-            st.warning("⚠️ Database එකේ කිසිම Data එකක් නෑ. කරුණාකර පළමුව Excel File එකක් Upload කරන්න.")
-        else:
-            timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
-            selected_batch = st.selectbox("📅 Select Stock Upload Batch / Date History:", timestamps)
+    if not timestamps:
+        st.warning("⚠️ Database එකේ කිසිම Data එකක් නෑ. කරුණාකර පළමුව Excel File එකක් Upload කරන්න.")
+    else:
+        selected_batch = st.selectbox("📅 Select Stock Upload Batch / Date History:", timestamps)
 
-            with st.spinner("Fetching full stock records from database..."):
-                df = fetch_all_batch_data(selected_batch)
+        with st.spinner("Fetching full stock records from database..."):
+            df = fetch_all_batch_data(selected_batch)
 
-            if not df.empty:
-                if 'Current_Stock_Units' in df.columns:
-                    df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
+        if not df.empty:
+            if 'Current_Stock_Units' in df.columns:
+                df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                if 'SKU' in df.columns:
-                    df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
-                    df['Category'] = df['SKU'].apply(categorize_by_sku)
+            if 'SKU' in df.columns:
+                df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
+                df['Category'] = df['SKU'].apply(categorize_by_sku)
 
-                store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
-                item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
+            store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
+            item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
 
-                warehouse_mask = (
-                    df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
-                    df.get('Store', pd.Series()).astype(str).str.contains('DCW1', case=False, na=False)
-                )
-                
-                warehouse_df = df[warehouse_mask]
-                outlets_df = df[~warehouse_mask]
+            warehouse_mask = (
+                df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                df.get('Store', pd.Series()).astype(str).str.contains('DCW1', case=False, na=False)
+            )
+            
+            warehouse_df = df[warehouse_mask]
+            outlets_df = df[~warehouse_mask]
 
-                # ================= 2. OUTLET SEARCH =================
-                if main_menu == "🔍 Outlet Stock Search":
-                    outlets = sorted(outlets_df[store_desc_col].dropna().unique())
-                    if outlets:
-                        selected_outlet = st.selectbox("📍 Select Outlet / Store", outlets)
+            # ================= 2. OUTLET SEARCH =================
+            if main_menu == "🔍 Outlet Stock Search":
+                outlets = sorted(outlets_df[store_desc_col].dropna().unique())
+                if outlets:
+                    selected_outlet = st.selectbox("📍 Select Outlet / Store", outlets)
 
-                        outlet_data = outlets_df[outlets_df[store_desc_col] == selected_outlet]
-                        items = sorted(outlet_data[item_column].dropna().unique())
-                        
-                        if items:
-                            selected_item = st.selectbox("📦 Select Item", items)
-                            item_details = outlet_data[outlet_data[item_column] == selected_item].iloc[0]
-
-                            st.markdown("---")
-                            st.subheader(f"🔹 {selected_item}")
-                            st.info(f"**SKU:** {item_details.get('SKU', 'N/A')}")
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.write(f"🏢 **Store:** {item_details.get(store_desc_col, 'N/A')}")
-                                st.write(f"📊 **Current Stock On Hand:** `{item_details.get('Current_Stock_Units', 0)}` Units")
-                                st.write(f"🔄 **System Last Update Time:** {item_details.get('Last_Update_Time', 'N/A')}")
-
-                            with col2:
-                                st.write(f"⚙️ **Category:** {item_details.get('Category', 'N/A')}")
-                                st.write(f"📝 **Status Description:** {item_details.get('Material_Status_Desc', 'N/A')}")
-
-                # ================= 3. ZERO STOCK REPORT =================
-                elif main_menu == "⚠️ Zero Stock Report":
-                    st.subheader(f"📋 Zero Stock Outlets Report ({selected_batch})")
-                    sub_tab1, sub_tab2 = st.tabs(["🥛 Dairies", "🍚 Rice"])
-
-                    def render_zero_stock_section(category_name):
-                        cat_df = outlets_df[outlets_df['Category'] == category_name]
-                        zero_df = cat_df[cat_df['Current_Stock_Units'] <= 0]
-
-                        if zero_df.empty:
-                            st.success(f"✅ මේ {category_name} Category එකේ කිසිම Outlet එකක් Zero Stock වී නැත.")
-                            return
-
-                        cat_items = ["-- All Zero Stock Items --"] + sorted(zero_df[item_column].dropna().unique().tolist())
-                        selected_zero_item = st.selectbox(f"🔍 Filter by {category_name} Item (Optional):", cat_items, key=f"zero_{category_name}")
-
-                        display_df = zero_df.copy()
-                        
-                        if selected_zero_item != "-- All Zero Stock Items --":
-                            display_df = display_df[display_df[item_column] == selected_zero_item]
-                            outlet_count = len(display_df)
-                            st.error(f"🚨 **{selected_zero_item}** Item එක Outlets **{outlet_count}** ක Zero Stock වී ඇත!")
-                        else:
-                            st.error(f"🚨 Outlets / Items **{len(zero_df)}** ක් Zero Stock වී ඇත!")
-
-                        display_cols = [store_desc_col, 'SKU', item_column, 'Current_Stock_Units', 'Material_Status_Desc']
-                        available_disp = [c for c in display_cols if c in display_df.columns]
-                        
-                        report_df = display_df[available_disp].reset_index(drop=True)
-                        report_df.columns = [c.replace('_', ' ') for c in available_disp]
-
-                        st.dataframe(report_df, use_container_width=True)
-
-                    with sub_tab1:
-                        render_zero_stock_section("Dairies")
-
-                    with sub_tab2:
-                        render_zero_stock_section("Rice")
-
-                # ================= 4. WAREHOUSE STOCK =================
-                elif main_menu == "🏬 Warehouse Stock":
-                    st.subheader(f"🏬 Warehouse Stock - DCW1 ({selected_batch})")
+                    outlet_data = outlets_df[outlets_df[store_desc_col] == selected_outlet]
+                    items = sorted(outlet_data[item_column].dropna().unique())
                     
-                    if not warehouse_df.empty:
-                        wh_display_cols = ['SKU', item_column, 'Current_Stock_Units', 'Category']
-                        available_wh = [c for c in wh_display_cols if c in warehouse_df.columns]
-                        clean_wh_df = warehouse_df[available_wh].reset_index(drop=True)
+                    if items:
+                        selected_item = st.selectbox("📦 Select Item", items)
+                        item_details = outlet_data[outlet_data[item_column] == selected_item].iloc[0]
 
-                        st.dataframe(clean_wh_df, use_container_width=True)
+                        st.markdown("---")
+                        st.subheader(f"🔹 {selected_item}")
+                        st.info(f"**SKU:** {item_details.get('SKU', 'N/A')}")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"🏢 **Store:** {item_details.get(store_desc_col, 'N/A')}")
+                            st.write(f"📊 **Current Stock On Hand:** `{item_details.get('Current_Stock_Units', 0)}` Units")
+                            st.write(f"🔄 **System Last Update Time:** {item_details.get('Last_Update_Time', 'N/A')}")
+
+                        with col2:
+                            st.write(f"⚙️ **Category:** {item_details.get('Category', 'N/A')}")
+                            st.write(f"📝 **Status Description:** {item_details.get('Material_Status_Desc', 'N/A')}")
+
+            # ================= 3. ZERO STOCK REPORT =================
+            elif main_menu == "⚠️ Zero Stock Report":
+                st.subheader(f"📋 Zero Stock Outlets Report ({selected_batch})")
+                sub_tab1, sub_tab2 = st.tabs(["🥛 Dairies", "🍚 Rice"])
+
+                def render_zero_stock_section(category_name):
+                    cat_df = outlets_df[outlets_df['Category'] == category_name]
+                    zero_df = cat_df[cat_df['Current_Stock_Units'] <= 0]
+
+                    if zero_df.empty:
+                        st.success(f"✅ මේ {category_name} Category එකේ කිසිම Outlet එකක් Zero Stock වී නැත.")
+                        return
+
+                    cat_items = ["-- All Zero Stock Items --"] + sorted(zero_df[item_column].dropna().unique().tolist())
+                    selected_zero_item = st.selectbox(f"🔍 Filter by {category_name} Item (Optional):", cat_items, key=f"zero_{category_name}")
+
+                    display_df = zero_df.copy()
+                    
+                    if selected_zero_item != "-- All Zero Stock Items --":
+                        display_df = display_df[display_df[item_column] == selected_zero_item]
+                        outlet_count = len(display_df)
+                        st.error(f"🚨 **{selected_zero_item}** Item එක Outlets **{outlet_count}** ක Zero Stock වී ඇත!")
                     else:
-                        st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත.")
+                        st.error(f"🚨 Outlets / Items **{len(zero_df)}** ක් Zero Stock වී ඇත!")
 
-    except Exception as e:
-        st.error(f"Error fetching data from database: {e}")
+                    display_cols = [store_desc_col, 'SKU', item_column, 'Current_Stock_Units', 'Material_Status_Desc']
+                    available_disp = [c for c in display_cols if c in display_df.columns]
+                    
+                    report_df = display_df[available_disp].reset_index(drop=True)
+                    report_df.columns = [c.replace('_', ' ') for c in available_disp]
+
+                    st.dataframe(report_df, use_container_width=True)
+
+                with sub_tab1:
+                    render_zero_stock_section("Dairies")
+
+                with sub_tab2:
+                    render_zero_stock_section("Rice")
+
+            # ================= 4. WAREHOUSE STOCK =================
+            elif main_menu == "🏬 Warehouse Stock":
+                st.subheader(f"🏬 Warehouse Stock - DCW1 ({selected_batch})")
+                
+                if not warehouse_df.empty:
+                    wh_display_cols = ['SKU', item_column, 'Current_Stock_Units', 'Category']
+                    available_wh = [c for c in warehouse_df.columns if c in wh_display_cols]
+                    clean_wh_df = warehouse_df[available_wh].reset_index(drop=True)
+
+                    st.dataframe(clean_wh_df, use_container_width=True)
+                else:
+                    st.warning("⚠️ Warehouse (DCW1) එකට අදාළ Records හමු වූයේ නැත.")
+  
+ 
