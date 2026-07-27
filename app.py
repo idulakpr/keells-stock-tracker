@@ -16,12 +16,15 @@ try:
 except Exception as e:
     st.error("⚠️ Database connection settings (Secrets) සකසා නොමැත!")
 
-# --- DAIRY SKU CODES ---
+# --- DAIRY SKU CODES (Image එක අනුව) ---
 DAIRY_SKUS = ['115281', '115282', '115283', '5285', '44132', '126507', '128484', '120115']
 
 def categorize_by_sku(sku):
-    sku_val = str(sku).replace('.0', '').strip()
-    if sku_val in DAIRY_SKUS:
+    if pd.isna(sku):
+        return 'Rice'
+    # SKU එක Float / Int / String මොකක් වුණත් සුද්ද කරලා String එකක් කරගැනීම
+    sku_clean = str(sku).split('.')[0].strip()
+    if sku_clean in DAIRY_SKUS:
         return 'Dairies'
     return 'Rice'
 
