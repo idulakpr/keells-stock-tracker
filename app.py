@@ -19,7 +19,8 @@ def get_file_mtime(filepath):
 def load_data(mtime):
     df = pd.read_excel(FILE_NAME)
     if 'SKU' in df.columns:
-        df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True)
+        # SKU එක String එකක් කරලා .0 වගේ ඒවා අයින් කරනවා
+        df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
 try:
@@ -28,17 +29,18 @@ try:
 
     item_column = 'SKU Description' if 'SKU Description' in df.columns else df.columns[0]
 
-    # --- CATEGORY CLASSIFICATION FUNCTION ---
-    def categorize_item(item_name):
-        name_upper = str(item_name).upper()
-        dairy_keywords = ['CURD', 'YOGHURT', 'CREAMOO', 'DAIRY', 'CIC']
-        if any(keyword in name_upper for keyword in dairy_keywords):
-            return 'Dairies'
-        else:
-            return 'Rice'
+    # --- EXACT DAIRY SKU CODES ---
+    # ඔයාගේ රූපයේ තියෙන exact SKU Codes ටික
+    dairy_skus = ['115281', '115282', '115283', '5285', '44132', '126507', '128484', '120115']
 
-    # DataFrame එකට Category column එකක් එකතු කිරීම
-    df['Category'] = df[item_column].apply(categorize_item)
+    # SKU Code එක අනුව Categorize කිරීම
+    def categorize_by_sku(row):
+        sku_val = str(row.get('SKU', '')).strip()
+        if sku_val in dairy_skus:
+            return 'Dairies'
+        return 'Rice'
+
+    df['Category'] = df.apply(categorize_by_sku, axis=1)
 
     # --- TABS FOR NAVIGATION ---
     tab1, tab2 = st.tabs(["🔍 Outlet Stock Search", "⚠️ Zero Stock Report"])
