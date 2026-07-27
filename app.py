@@ -16,13 +16,12 @@ try:
 except Exception as e:
     st.error("⚠️ Database connection settings (Secrets) සකසා නොමැත!")
 
-# --- DAIRY SKU CODES (Image එක අනුව) ---
+# --- DAIRY SKU CODES (from image) ---
 DAIRY_SKUS = ['115281', '115282', '115283', '5285', '44132', '126507', '128484', '120115']
 
 def categorize_by_sku(sku):
     if pd.isna(sku):
         return 'Rice'
-    # SKU එක Float / Int / String මොකක් වුණත් සුද්ද කරලා String එකක් කරගැනීම
     sku_clean = str(sku).split('.')[0].strip()
     if sku_clean in DAIRY_SKUS:
         return 'Dairies'
@@ -32,7 +31,13 @@ def categorize_by_sku(sku):
 st.markdown("### 📌 Navigation Menu")
 main_menu = st.radio(
     "ඔයාට අවශ්‍ය Option එක තෝරන්න:",
-    ["📤 Upload New Stock (Memorize)", "🔍 Outlet Stock Search", "⚠️ Zero Stock Report", "🏬 Warehouse Stock"],
+    [
+        "📤 Upload New Stock (Memorize)", 
+        "🔍 Outlet Stock Search", 
+        "⚠️ Zero Stock Report", 
+        "🏬 Warehouse Stock",
+        "🗑️ Manage / Delete Uploaded Files"
+    ],
     index=0
 )
 
@@ -61,11 +66,11 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     }
                     df = df.rename(columns=rename_dict)
 
-                    # 2. Clean SKU
+                    # 2. Clean SKU First before Categorization
                     if 'SKU' in df.columns:
-                        df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
 
-                    # 3. Categorize
+                    # 3. Categorize (Robust Matching)
                     df['Category'] = df['SKU'].apply(categorize_by_sku)
 
                     # 4. Stock Column එක Numeric කරලා NaN 0 කිරීම
@@ -86,7 +91,7 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     cols_to_keep = [c for c in valid_db_columns if c in df.columns]
                     df_upload = df[cols_to_keep].copy()
 
-                    # 🛠️ 7. JSON NaN Error එක සම්පූර්ණයෙන්ම Fix කරන පේළි 2:
+                    # 7. JSON NaN Error Fix
                     df_upload['Current_Stock_Units'] = df_upload['Current_Stock_Units'].fillna(0)
                     df_upload = df_upload.astype(object).where(pd.notnull(df_upload), None)
 
@@ -101,6 +106,31 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     st.balloons()
                 except Exception as e:
                     st.error(f"Error Uploading to Database: {e}")
+
+# ================= 5. MANAGE / DELETE UPLOADED FILES =================
+elif main_menu == "🗑️ Manage / Delete Uploaded Files":
+    st.subheader("🗑️ Upload කරපු Excel Batches අයින් කිරීම")
+    try:
+        response = supabase.table('stock_history').select('Uploaded_At').execute()
+        raw_data = response.data
+
+        if not raw_data:
+            st.info("ℹ️ Database එකේ කිසිම Data එකක් නැත.")
+        else:
+            timestamps = sorted(list(set([r['Uploaded_At'] for r in raw_data if r.get('Uploaded_At')])), reverse=True)
+            
+            selected_delete_batch = st.selectbox("❌ Delete කරන්න අවශ්‍ය Upload Batch (Timestamp) එක තෝරන්න:", timestamps)
+
+            st.warning(f"⚠️ ඔබ තෝරාගත් Batch එක (`{selected_delete_batch}`) ස්ථිරවම Database එකෙන් Delete වනු ඇත.")
+            
+            if st.button("🔴 Delete Selected Batch"):
+                with st.spinner("Deleting Batch from Database..."):
+                    supabase.table('stock_history').delete().eq('Uploaded_At', selected_delete_batch).execute()
+                    st.success(f"✅ Batch '{selected_delete_batch}' සාර්ථකව Delete කරන ලදී!")
+                    st.rerun()
+
+    except Exception as e:
+        st.error(f"Error deleting data: {e}")
 
 # ================= DATA RETRIEVAL LOGIC FOR OTHER TABS =================
 else:
@@ -121,6 +151,9 @@ else:
                 if 'Current_Stock_Units' in df.columns:
                     df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
                 
+                if 'SKU' in df.columns:
+                    df['Category'] = df['SKU'].apply(categorize_by_sku)
+
                 store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
                 item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
 
