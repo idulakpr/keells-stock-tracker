@@ -104,13 +104,9 @@ def get_unique_badges():
 def download_multi_sheet_excel(summary_dict, detailed_df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Sheet 1: Summary Metrics
         summary_df = pd.DataFrame(list(summary_dict.items()), columns=['Metric', 'Value'])
         summary_df.to_excel(writer, index=False, sheet_name='Summary_Metrics')
-        
-        # Sheet 2: Detailed OOS Data Table
         detailed_df.to_excel(writer, index=False, sheet_name='Detailed_OOS_Data')
-        
     return output.getvalue()
 
 # --- NAVIGATION MENU ---
@@ -272,7 +268,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
     else:
         st.caption("කාල පරාසයක් සහ අවශ්‍ය Filter එක තෝරා OOS Trend එක බලන්න:")
 
-        # Date Range Selection
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("📅 Start Date", datetime.date.today() - datetime.timedelta(days=7))
@@ -282,7 +277,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
         if start_date > end_date:
             st.error("❌ Start Date එක End Date එකට වඩා වැඩි විය නොහැක!")
         else:
-            # Filter Badges by Date Range
             filtered_badges = []
             for b in timestamps:
                 try:
@@ -300,7 +294,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
             else:
                 st.success(f"🔍 Batches **{len(filtered_badges)}** ක් හමු විය.")
 
-                # Analysis Mode Selection
                 analysis_mode = st.radio(
                     "🔍 Analysis Type එක තෝරන්න:",
                     ["📦 Item-wise Analysis (Outlets count over time)", "🏬 Outlet-wise Analysis (Items count over time)"],
@@ -328,7 +321,11 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                             for badge in filtered_badges:
                                 batch_df = fetch_all_batch_data(badge)
                                 if not batch_df.empty:
-                                    wh_mask = batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
+                                    # IZCS සහ DCDI ඇතුළු අනෙකුත් Non-store කේතයන් ඉවත් කිරීම
+                                    wh_mask = (
+                                        batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                                        batch_df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
+                                    )
                                     outlets_b_df = batch_df[~wh_mask]
                                     
                                     if 'Current_Stock_Units' in outlets_b_df.columns:
@@ -384,7 +381,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                                 st.subheader("📋 Batch-wise OOS Outlet Details")
                                 st.dataframe(chart_df, use_container_width=True)
 
-                                # --- MULTI-SHEET EXCEL REPORT PREPARATION & DOWNLOAD ---
                                 summary_metrics = {
                                     "Analysis Type": "Item-wise OOS Analysis",
                                     "Category": selected_cat,
@@ -408,7 +404,10 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                 else:
                     selected_cat_outlet = st.radio("📂 Category එක තෝරන්න:", ["Dairies", "Rice"], horizontal=True, key="trend_cat_filter_outlet")
                     
-                    wh_mask_sample = sample_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
+                    wh_mask_sample = (
+                        sample_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                        sample_df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
+                    )
                     outlets_sample_df = sample_df[~wh_mask_sample]
                     
                     all_outlets_list = sorted(outlets_sample_df[store_c].dropna().unique().tolist())
@@ -423,7 +422,10 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                             for badge in filtered_badges:
                                 batch_df = fetch_all_batch_data(badge)
                                 if not batch_df.empty:
-                                    wh_mask_b = batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
+                                    wh_mask_b = (
+                                        batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
+                                        batch_df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
+                                    )
                                     outlets_b_df = batch_df[~wh_mask_b]
 
                                     if 'Current_Stock_Units' in outlets_b_df.columns:
@@ -487,7 +489,6 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                                 st.subheader("📋 Batch-wise OOS Item Details")
                                 st.dataframe(chart_df, use_container_width=True)
 
-                                # --- MULTI-SHEET EXCEL REPORT PREPARATION & DOWNLOAD ---
                                 summary_metrics = {
                                     "Analysis Type": "Outlet-wise OOS Analysis",
                                     "Category": selected_cat_outlet,
@@ -528,9 +529,10 @@ else:
             store_desc_col = 'Store_Description' if 'Store_Description' in df.columns else 'Store'
             item_column = 'SKU_Description' if 'SKU_Description' in df.columns else 'SKU'
 
+            # IZCS සහ DCDI අයින් කර සාමාන්‍ය Outlets සහ Warehouse වෙන් කිරීම
             warehouse_mask = (
                 df[store_desc_col].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False) |
-                df.get('Store', pd.Series()).astype(str).str.contains('DCW1', case=False, na=False)
+                df.get('Store', pd.Series()).astype(str).str.contains('DCW1|IZCS|DCDI', case=False, na=False)
             )
             
             warehouse_df = df[warehouse_mask]
