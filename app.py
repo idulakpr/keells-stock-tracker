@@ -38,7 +38,7 @@ st.markdown("---")
 # ================= 1. UPLOAD NEW STOCK =================
 if main_menu == "📤 Upload New Stock (Memorize)":
     st.subheader("📤 Upload Daily Excel File to Database")
-    st.caption("මෙහිදී Upload කරන හැම Excel එකක්ම Database එකේ Time-stamp එකත් එක්ක Memorize වෙනවා.")
+ 
 
     uploaded_file = st.file_uploader("Choose App.xlsx file", type=["xlsx", "xls"])
 
