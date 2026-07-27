@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from supabase import create_client, Client
 import datetime
 
 # Page setup (Mobile friendly)
 st.set_page_config(page_title="Keells Stock Tracker", layout="centered")
 
-st.title("🛒 Keells Stock Tracker (with History)")
+st.title("🛒 Keells Stock Tracker")
 
 # --- SUPABASE CONNECTION & ADMIN AUTH SETUP ---
 try:
@@ -51,7 +52,8 @@ def categorize_by_sku(sku):
         return 'Dairies'
     return 'Rice'
 
-# --- HELPER FUNCTION: SUPABASE PAGINATION FOR DATA FETCHING ---
+# --- HELPER FUNCTION: SUPABASE PAGINATION FOR SINGLE BATCH FETCH ---
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_all_batch_data(selected_batch):
     all_rows = []
     page_size = 1000
@@ -74,7 +76,6 @@ def fetch_all_batch_data(selected_batch):
         
     df = pd.DataFrame(all_rows)
     
-    # 🧹 Remove Duplicates if any exists within the same batch
     if not df.empty and 'Store' in df.columns and 'SKU' in df.columns:
         df = df.drop_duplicates(subset=['Store', 'SKU'], keep='last')
         
@@ -83,14 +84,12 @@ def fetch_all_batch_data(selected_batch):
 # --- HELPER FUNCTION: FAST VIEW-BASED UNIQUE BADGES FETCH ---
 def get_unique_badges():
     try:
-        # DB එකේ Rows ලක්ෂ ගණනක් Scan කරන්නේ නැතුව View එක හරහා Instant Distinct Badges අදී
         response = supabase.table('unique_badges_view').select('Uploaded_At').execute()
         if response.data:
             badges = [row['Uploaded_At'] for row in response.data if row.get('Uploaded_At')]
             return sorted(badges, reverse=True)
         return []
     except Exception as e:
-        # View එක සාදා නොමැති නම් Fallback එකක් ලෙස පැරණි Safe Direct Query එක ක්‍රියාත්මක වේ
         try:
             res = supabase.table('stock_history').select('Uploaded_At').execute()
             if res.data:
@@ -103,7 +102,6 @@ def get_unique_badges():
 # --- NAVIGATION MENU ---
 st.markdown("### 📌 Navigation Menu")
 
-# Admin Status Banner
 if st.session_state.is_admin:
     st.sidebar.success("🔓 Logged in as Admin")
     if st.sidebar.button("🔒 Logout Admin"):
@@ -113,19 +111,23 @@ if st.session_state.is_admin:
 main_menu = st.radio(
     "ඔයාට අවශ්‍ය Option එක තෝරන්න:",
     [
-        "📤 Upload New Stock (Memorize)", 
-        "🔍 Outlet Stock Search", 
-        "⚠️ Zero Stock Report", 
-        "🏬 Warehouse Stock",
-        "🗑️ Manage / Delete Uploaded Files"
+        "🔍 Outlet Stock Search (Latest)", 
+        "⚠️ Zero Stock Report (Latest)", 
+        "🏬 Warehouse Stock (Latest)",
+        "📈 Historical OOS Trend Analysis",
+        "📤 Upload New Stock (Admin)", 
+        "🗑️ Manage / Delete Uploads (Admin)"
     ],
-    index=1
+    index=0
 )
 
 st.markdown("---")
 
+timestamps = get_unique_badges()
+latest_badge = timestamps[0] if timestamps else None
+
 # ================= 1. UPLOAD NEW STOCK (PROTECTED) =================
-if main_menu == "📤 Upload New Stock (Memorize)":
+if main_menu == "📤 Upload New Stock (Admin)":
     st.subheader("📤 Upload Daily Excel File to Database")
     
     if check_admin_password():
@@ -143,7 +145,6 @@ if main_menu == "📤 Upload New Stock (Memorize)":
         
         custom_note = st.text_input("📝 වෙනත් සටහනක් (Optional Note - e.g. Evening Update):", "")
 
-        # Generate Unique Badge Name
         date_str = upload_date.strftime("%Y-%m-%d")
         if custom_note.strip():
             badge_name = f"{date_str} - {batch_num} ({custom_note.strip()})"
@@ -152,13 +153,9 @@ if main_menu == "📤 Upload New Stock (Memorize)":
 
         st.info(f"🏷️ **මෙම File එක Save වන Badge එක:** `{badge_name}`")
 
-        # 🔍 Check if Badge already exists in DB
-        existing_badges = get_unique_badges()
-        overwrite_flag = False
-        
-        if badge_name in existing_badges:
-            st.warning(f"⚠️ **`{badge_name}`** කියන Badge එක දැනටමත් Database එකේ තියෙනවා! ඔබ Upload කළහොත් පැරණි Data අලුත් Data වලින් Replace වනු ඇත.")
-            overwrite_flag = True
+        overwrite_flag = badge_name in timestamps
+        if overwrite_flag:
+            st.warning(f"⚠️ **`{badge_name}`** කියන Badge එක දැනටමත් Database එකේ තියෙනවා! Upload කළහොත් පැරණි Data Replace වෙනවා.")
 
         uploaded_file = st.file_uploader("Choose App.xlsx file", type=["xlsx", "xls"])
 
@@ -168,7 +165,6 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                 status_text = st.empty()
                 
                 try:
-                    # 🗑️ If badge exists, clean existing records first to avoid duplicates
                     if overwrite_flag:
                         status_text.text("🔄 පැරණි Duplicate Records අයින් කරමින් පවතී...")
                         supabase.table('stock_history').delete().eq('Uploaded_At', badge_name).execute()
@@ -176,7 +172,6 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     status_text.text("📖 Excel File එක කියවමින් පවතී...")
                     df = pd.read_excel(uploaded_file)
 
-                    # 1. Clean Column Names
                     rename_dict = {
                         'SKU Description': 'SKU_Description',
                         'Store Description': 'Store_Description',
@@ -186,21 +181,16 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     }
                     df = df.rename(columns=rename_dict)
 
-                    # 2. Clean SKU First before Categorization
                     if 'SKU' in df.columns:
                         df['SKU'] = df['SKU'].astype(str).apply(lambda x: str(x).split('.')[0].strip())
 
-                    # 3. Categorize
                     df['Category'] = df['SKU'].apply(categorize_by_sku)
 
-                    # 4. Stock Column Numeric කිරීම
                     if 'Current_Stock_Units' in df.columns:
                         df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
 
-                    # 5. User Badge Name
                     df['Uploaded_At'] = badge_name
 
-                    # 6. Database Columns Matching
                     valid_db_columns = [
                         'Uploaded_At', 'Store', 'Store_Description', 'SKU', 
                         'SKU_Description', 'Category', 'Current_Stock_Units', 
@@ -209,8 +199,6 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     
                     cols_to_keep = [c for c in valid_db_columns if c in df.columns]
                     df_upload = df[cols_to_keep].copy()
-
-                    # 7. Clean NaN Values for Supabase JSON Safety
                     df_upload = df_upload.where(pd.notnull(df_upload), None)
 
                     records = df_upload.to_dict(orient='records')
@@ -229,7 +217,8 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     status_text.empty()
                     progress_bar.empty()
                     
-                    st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'! Total Rows: {total_records}")
+                    st.cache_data.clear()
+                    st.success(f"✅ Data successfully Memorized under Badge: '{badge_name}'!")
                     st.balloons()
                     st.rerun()
                     
@@ -238,13 +227,11 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     progress_bar.empty()
                     st.error(f"❌ Upload එක අසාර්ථක විය! Error Message: {e}")
 
-# ================= 5. MANAGE / DELETE UPLOADED FILES (PROTECTED) =================
-elif main_menu == "🗑️ Manage / Delete Uploaded Files":
+# ================= 2. MANAGE / DELETE UPLOADED FILES (PROTECTED) =================
+elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
     st.subheader("🗑️ Upload කරපු Excel Batches අයින් කිරීම")
     
     if check_admin_password():
-        timestamps = get_unique_badges()
-
         if not timestamps:
             st.info("ℹ️ Database එකේ කිසිම Data එකක් නැත.")
         else:
@@ -256,22 +243,126 @@ elif main_menu == "🗑️ Manage / Delete Uploaded Files":
                 with st.spinner("Deleting Batch from Database..."):
                     try:
                         supabase.table('stock_history').delete().eq('Uploaded_At', selected_delete_batch).execute()
+                        st.cache_data.clear()
                         st.success(f"✅ Badge '{selected_delete_batch}' සාර්ථකව Delete කරන ලදී!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error deleting data: {e}")
 
-# ================= DATA RETRIEVAL LOGIC FOR PUBLIC TABS =================
-else:
-    timestamps = get_unique_badges()
-
+# ================= 3. HISTORICAL OOS TREND ANALYSIS (NEW GRAPH FEATURE) =================
+elif main_menu == "📈 Historical OOS Trend Analysis":
+    st.subheader("📈 Item OOS Trend Analysis Over Time")
+    
     if not timestamps:
-        st.warning("⚠️ Database එකේ කිසිම Data එකක් නෑ. කරුණාකර පළමුව Excel File එකක් Upload කරන්න.")
+        st.warning("⚠️ Database එකේ කිසිම Data එකක් නැත.")
     else:
-        selected_batch = st.selectbox("📅 Select Stock Upload Batch / Date History:", timestamps)
+        st.caption("තෝරාගන්නා කාල පරාසය ඇතුළත Item එකක් OOS වී පැවති දින ගණන සහ Outlets ප්‍රමාණය පිළිබඳ Graph එක:")
 
-        with st.spinner("Fetching full stock records from database..."):
-            df = fetch_all_batch_data(selected_batch)
+        # Date Range Selection
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("📅 Start Date", datetime.date.today() - datetime.timedelta(days=7))
+        with col2:
+            end_date = st.date_input("📅 End Date", datetime.date.today())
+
+        if start_date > end_date:
+            st.error("❌ Start Date එක End Date එකට වඩා වැඩි විය නොහැක!")
+        else:
+            # Filter Badges by Date Range
+            filtered_badges = []
+            for b in timestamps:
+                try:
+                    # Extract YYYY-MM-DD from badge string
+                    b_date_str = b.split(' - ')[0].strip()
+                    b_date = datetime.datetime.strptime(b_date_str, "%Y-%m-%d").date()
+                    if start_date <= b_date <= end_date:
+                        filtered_badges.append(b)
+                except:
+                    pass
+
+            # Sort chronological for graph display
+            filtered_badges = sorted(filtered_badges)
+
+            if not filtered_badges:
+                st.warning("⚠️ ඔබ තෝරාගත් Date Range එක ඇතුළත කිසිදු Stock Batch එකක් හමු නොවීය.")
+            else:
+                st.success(f"🔍 Batches **{len(filtered_badges)}** ක් හමු විය. (From {filtered_badges[0]} to {filtered_badges[-1]})")
+
+                # Sample latest data to get item list for dropdown
+                sample_df = fetch_all_batch_data(filtered_badges[-1])
+                item_col = 'SKU_Description' if 'SKU_Description' in sample_df.columns else 'SKU'
+                
+                all_items = sorted(sample_df[item_col].dropna().unique().tolist())
+                selected_item_for_chart = st.selectbox("📦 Filter by Item:", all_items)
+
+                if st.button("🚀 Generate OOS Trend Graph"):
+                    with st.spinner("Analyzing OOS history across selected dates..."):
+                        trend_data = []
+
+                        for badge in filtered_badges:
+                            batch_df = fetch_all_batch_data(badge)
+                            if not batch_df.empty:
+                                store_c = 'Store_Description' if 'Store_Description' in batch_df.columns else 'Store'
+                                
+                                # Filter out Warehouse
+                                wh_mask = batch_df[store_c].astype(str).str.contains('DCW1|Kerawalapitiya', case=False, na=False)
+                                outlets_b_df = batch_df[~wh_mask]
+                                
+                                if 'Current_Stock_Units' in outlets_b_df.columns:
+                                    outlets_b_df['Current_Stock_Units'] = pd.to_numeric(outlets_b_df['Current_Stock_Units'], errors='coerce').fillna(0)
+
+                                # Filter for selected Item and OOS (Current_Stock_Units <= 0)
+                                item_df = outlets_b_df[(outlets_b_df[item_col] == selected_item_for_chart) & (outlets_b_df['Current_Stock_Units'] <= 0)]
+                                
+                                oos_outlet_count = len(item_df)
+                                trend_data.append({
+                                    "Batch / Date": badge,
+                                    "OOS Outlets Count": oos_outlet_count
+                                })
+
+                        chart_df = pd.DataFrame(trend_data)
+
+                        if chart_df.empty:
+                            st.warning("No OOS records found for this item.")
+                        else:
+                            # Metrics Calculation
+                            total_batches_checked = len(chart_df)
+                            oos_days_count = len(chart_df[chart_df["OOS Outlets Count"] > 0])
+                            max_oos_outlets = chart_df["OOS Outlets Count"].max()
+
+                            st.markdown("---")
+                            m1, m2, m3 = st.columns(3)
+                            m1.metric("Checked Batches", f"{total_batches_checked}")
+                            m2.metric("OOS Occurred Batches", f"{oos_days_count} Batches", delta_color="inverse")
+                            m3.metric("Max OOS Outlets Peak", f"{max_oos_outlets} Outlets")
+
+                            # Plot Line/Bar Graph using Plotly
+                            st.subheader(f"📊 OOS Outlet Count Trend - {selected_item_for_chart}")
+                            
+                            fig = px.bar(
+                                chart_df, 
+                                x="Batch / Date", 
+                                y="OOS Outlets Count",
+                                text="OOS Outlets Count",
+                                labels={"OOS Outlets Count": "Number of Outlets OOS", "Batch / Date": "Upload Batch / Date"},
+                                color_discrete_sequence=['#ff4b4b']
+                            )
+                            fig.update_traces(textposition='outside')
+                            fig.update_layout(xaxis_tickangle=-45)
+
+                            st.plotly_chart(fig, use_container_width=True)
+
+                            st.dataframe(chart_df, use_container_width=True)
+
+# ================= 4. FAST LATEST DATA RETRIEVAL FOR DAILY DASHBOARDS =================
+else:
+    if not latest_badge:
+        st.warning("⚠️ Database එකේ කිසිම Data එකක් නෑ. කරුණාකර Admin හරහා Excel File එකක් Upload කරන්න.")
+    else:
+        st.caption(f"⚡ **Showing Latest Update:** `{latest_badge}`")
+
+        with st.spinner("Fast loading latest stock data..."):
+            df = fetch_all_batch_data(latest_badge)
 
         if not df.empty:
             if 'Current_Stock_Units' in df.columns:
@@ -292,8 +383,8 @@ else:
             warehouse_df = df[warehouse_mask]
             outlets_df = df[~warehouse_mask]
 
-            # ================= 2. OUTLET SEARCH =================
-            if main_menu == "🔍 Outlet Stock Search":
+            # --- OUTLET STOCK SEARCH (FAST) ---
+            if main_menu == "🔍 Outlet Stock Search (Latest)":
                 outlets = sorted(outlets_df[store_desc_col].dropna().unique())
                 if outlets:
                     selected_outlet = st.selectbox("📍 Select Outlet / Store", outlets)
@@ -319,9 +410,9 @@ else:
                             st.write(f"⚙️ **Category:** {item_details.get('Category', 'N/A')}")
                             st.write(f"📝 **Status Description:** {item_details.get('Material_Status_Desc', 'N/A')}")
 
-            # ================= 3. ZERO STOCK REPORT =================
-            elif main_menu == "⚠️ Zero Stock Report":
-                st.subheader(f"📋 Zero Stock Outlets Report ({selected_batch})")
+            # --- ZERO STOCK REPORT (FAST) ---
+            elif main_menu == "⚠️ Zero Stock Report (Latest)":
+                st.subheader(f"📋 Zero Stock Outlets Report (Latest)")
                 sub_tab1, sub_tab2 = st.tabs(["🥛 Dairies", "🍚 Rice"])
 
                 def render_zero_stock_section(category_name):
@@ -358,9 +449,9 @@ else:
                 with sub_tab2:
                     render_zero_stock_section("Rice")
 
-            # ================= 4. WAREHOUSE STOCK =================
-            elif main_menu == "🏬 Warehouse Stock":
-                st.subheader(f"🏬 Warehouse Stock - DCW1 ({selected_batch})")
+            # --- WAREHOUSE STOCK (FAST) ---
+            elif main_menu == "🏬 Warehouse Stock (Latest)":
+                st.subheader("🏬 Warehouse Stock - DCW1 (Latest)")
                 
                 if not warehouse_df.empty:
                     wh_display_cols = ['SKU', item_column, 'Current_Stock_Units', 'Category']
