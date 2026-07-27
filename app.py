@@ -42,17 +42,23 @@ try:
     df['Category'] = df.apply(categorize_by_sku, axis=1)
 
     # --- WAREHOUSE FILTER (DCW1) ---
-    # Store එක 'DCW1' වෙන කොටස් Warehouse එකටත්, අනිත් ඒවා Outlets වලටත් වෙන් කිරීම
     warehouse_mask = df[store_column].astype(str).str.strip().str.upper() == 'DCW1'
     
     warehouse_df = df[warehouse_mask]
     outlets_df = df[~warehouse_mask]
 
-    # --- TABS FOR NAVIGATION ---
-    tab1, tab2, tab3 = st.tabs(["🔍 Outlet Stock Search", "⚠️ Zero Stock Report", "🏬 Warehouse Stock"])
+    # --- VERTICAL MENU SELECTION (පහළට එක යට එක) ---
+    st.markdown("### 📌 Navigation Menu")
+    main_menu = st.radio(
+        "ඔයාට අවශ්‍ය Option එක තෝරන්න:",
+        ["🔍 Outlet Stock Search", "⚠️ Zero Stock Report", "🏬 Warehouse Stock"],
+        index=0
+    )
 
-    # ================= TAB 1: OUTLET SEARCH (EXCLUDES DCW1) =================
-    with tab1:
+    st.markdown("---")
+
+    # ================= 1. OUTLET STOCK SEARCH =================
+    if main_menu == "🔍 Outlet Stock Search":
         outlets = sorted(outlets_df[store_column].dropna().unique())
         selected_outlet = st.selectbox("📍 Select Outlet / Store", outlets)
 
@@ -79,8 +85,8 @@ try:
             st.write(f"📝 **Status Description:** {item_details.get('Material Status Description', 'N/A')}")
             st.write(f"🔑 **Dairy Key:** `{item_details.get('Dairy_Key', 'N/A')}`")
 
-    # ================= TAB 2: ZERO STOCK REPORT (EXCLUDES DCW1) =================
-    with tab2:
+    # ================= 2. ZERO STOCK REPORT =================
+    elif main_menu == "⚠️ Zero Stock Report":
         st.subheader("📋 Item-wise Zero Stock Outlets")
         
         sub_tab1, sub_tab2 = st.tabs(["🥛 Dairies", "🍚 Rice"])
@@ -125,8 +131,8 @@ try:
         with sub_tab2:
             render_zero_stock_section("Rice")
 
-    # ================= TAB 3: WAREHOUSE STOCK (DCW1 ONLY) =================
-    with tab3:
+    # ================= 3. WAREHOUSE STOCK =================
+    elif main_menu == "🏬 Warehouse Stock":
         st.subheader("🏬 Warehouse Stock (DCW1)")
         st.caption("Warehouse (DCW1) එකේ දැනට තියෙන සම්පූර්ණ Stock මට්ටම්:")
 
@@ -137,10 +143,8 @@ try:
             clean_wh_df = warehouse_df[valid_wh_cols].reset_index(drop=True)
             clean_wh_df.columns = [col.replace('Current Stock On Hand Units', 'Stock On Hand') for col in clean_wh_df.columns]
 
-            # Show Data Frame
             st.dataframe(clean_wh_df, use_container_width=True)
 
-            # Download Warehouse Report Button
             csv_wh = clean_wh_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Warehouse Stock Report (CSV)",
