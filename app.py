@@ -62,8 +62,8 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     rename_dict = {
                         'SKU Description': 'SKU_Description',
                         'Store Description': 'Store_Description',
-                        'Current Stock On Hand Units': 'Current_Stock_Units',
-                        'Material Status Description': 'Material_Status_Desc',
+                        'Current SIH': 'Current_Stock_Units',
+                        'Status': 'Material_Status_Desc',
                         'Last Update Date Time': 'Last_Update_Time'
                     }
                     df = df.rename(columns=rename_dict)
@@ -151,7 +151,7 @@ else:
                         zero_df = cat_df[cat_df['Current_Stock_Units'] <= 0]
 
                         if zero_df.empty:
-                            st.success(f"✅ නියමයි! මේ {category_name} Category එකේ කිසිම Item එකක් Zero Stock වෙලා නෑ.")
+                            st.success(f"✅ මේ {category_name} Category එකේ කිසිම Item එකක් Zero Stock වෙලා නෑ.")
                             return
 
                         st.error(f"🚨 මුළු Outlets / Items {len(zero_df)} ක් Zero Stock වී ඇත!")
