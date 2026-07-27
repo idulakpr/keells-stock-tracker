@@ -58,23 +58,23 @@ if main_menu == "📤 Upload New Stock (Memorize)":
                     }
                     df = df.rename(columns=rename_dict)
 
-                    # 2. Stock Column එක 100% Numeric කරගැනීම (0, None, Text ඔක්කොම Number වෙනවා)
-                    if 'Current_Stock_Units' in df.columns:
-                        df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
-
-                    # 3. Clean SKU
+                    # 2. Clean SKU
                     if 'SKU' in df.columns:
                         df['SKU'] = df['SKU'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-                    # 4. Categorize
+                    # 3. Categorize
                     df['Category'] = df['SKU'].apply(categorize_by_sku)
-                    
+
+                    # 4. Stock Column එක Numeric කරලා NaN ඔක්කොම 0 කිරීම (Error එක Fix වෙන තැන)
+                    if 'Current_Stock_Units' in df.columns:
+                        df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
+
                     # 5. Timestamp
                     upload_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     df['Uploaded_At'] = upload_timestamp
 
-                    # 6. Null Fix for Supabase JSON compatibility
-                    df = df.where(pd.notnull(df), None)
+                    # 6. අනිත් Columns වල Blank / NaN values, None (JSON compliant) බවට හැරවීම
+                    df = df.astype(object).where(pd.notnull(df), None)
 
                     records = df.to_dict(orient='records')
 
@@ -104,7 +104,6 @@ else:
             df = pd.DataFrame(data_resp.data)
 
             if not df.empty:
-                # Stock numbers numeric බව තහවුරු කිරීම
                 if 'Current_Stock_Units' in df.columns:
                     df['Current_Stock_Units'] = pd.to_numeric(df['Current_Stock_Units'], errors='coerce').fillna(0)
                 
@@ -154,12 +153,7 @@ else:
 
                     def render_zero_stock_section(category_name):
                         cat_df = outlets_df[outlets_df['Category'] == category_name]
-                        
-                        # Stock 0 හෝ ඊට අඩු Outlets සියල්ල පෙන්නුම් කිරීම
                         zero_df = cat_df[cat_df['Current_Stock_Units'] <= 0]
-
-                        # Debug/Diagnostic Message: කිසිම දෙයක් පෙන්නන්නේ නැත්නම් Data ප්‍රමාණය බලාගන්න
-                        st.caption(f"Total `{category_name}` rows found: {len(cat_df)} | Zero stock rows: {len(zero_df)}")
 
                         if zero_df.empty:
                             st.success(f"✅ මේ {category_name} Category එකේ කිසිම Outlet එකක් Zero Stock වී නැත.")
