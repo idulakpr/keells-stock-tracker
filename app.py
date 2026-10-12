@@ -1427,9 +1427,9 @@ elif main_menu == "📊 Arpico PO Analysis":
                 )
 
 
-po_df["item_code"] = (
-    po_df["item_code"].fillna("").astype(str).str.strip()
-)
+                po_df["item_code"] = (
+                    po_df["item_code"].fillna("").astype(str).str.strip()
+                )
 
 
                 po_df["ordered_qty"] = pd.to_numeric(
