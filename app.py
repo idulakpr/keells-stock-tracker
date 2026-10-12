@@ -1151,8 +1151,11 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
                             continue
 
                         # Ignore ordinary headings and totals.
-                        if not re.match(r"^\d+\s+GRRG", line):
+                   
+                        if not re.match(r"^\d+\s+\d+\s+GRRG", line):
                             continue
+
+
 
                         item_match = item_pattern.match(line)
 
