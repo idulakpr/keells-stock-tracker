@@ -1351,7 +1351,7 @@ elif main_menu == "📊 Arpico PO Analysis":
             # pack_size_kg = weight of ONE Arpico ordered pack
             # -------------------------------------------------
             product_mapping = {
-                "GRRG83471":  {"material_code": "WB1012",    "pack_size_kg": 12.0},
+                "GRRG83471":  {"material_code": "WB1012",    "pack_size_kg": 1.0},
                 "GRRG82658":  {"material_code": "WB1002",    "pack_size_kg": 2.0},
                 "GRRG778481": {"material_code": "WBL1005",   "pack_size_kg": 5.0},
                 "GRRG716042": {"material_code": "SS1012",    "pack_size_kg": 1.0},
@@ -1477,6 +1477,40 @@ elif main_menu == "📊 Arpico PO Analysis":
                             "Delivered_Weight_Kg"
                         ]
                     )
+
+# DEBUG: CHECK SAP DATA AND PO MATCHING
+
+st.subheader("🔍 SAP Mapping & Matching Check")
+
+st.write("Arpico PO records:", len(po_df))
+st.write("SAP sales records:", len(sales_df))
+
+st.write("Arpico PO sample:")
+st.dataframe(
+    po_df[["po_number", "item_code", "item_name", "ordered_qty"]].head(10),
+    use_container_width=True
+)
+
+if not sales_df.empty:
+    st.write("SAP sales sample:")
+    st.dataframe(
+        sales_df[
+            ["po_number", "material_code", "net_weight"]
+        ].head(10),
+        use_container_width=True
+    )
+
+    st.write("SAP material codes found:")
+    st.write(
+        sorted(
+            sales_df["material_code"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )[:100]
+    )
 
                 # -------------------------------------------------
                 # MAP PO LINES TO SAP MATERIALS
