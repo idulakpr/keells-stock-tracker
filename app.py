@@ -1122,11 +1122,13 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
 
                         # Detect outlet headings such as:
                         # 02 Supply Kadawatha SC
+                        
                         outlet_match = re.match(
-                            r"^Supply\s+\d{1,3}\s+(.+?)\s*$"
+                            r"^Supply\s+\d{1,3}\s+(.+?)\s*$",
                             line,
                             re.IGNORECASE
                         )
+
 
                         if outlet_match:
                             current_outlet = (
