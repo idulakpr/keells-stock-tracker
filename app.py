@@ -1512,6 +1512,60 @@ elif main_menu == "📊 Arpico PO Analysis":
                     )
                 else:
                     st.info("No records match the selected filters.")
+                    
+# TEMPORARY CHECK: PO and Sales Data Matching
+
+st.subheader("🔎 Check PO vs Sales Data Matching")
+
+try:
+    sales_check = fetch_all_rows("sales_history")
+
+    if sales_check.empty:
+        st.warning("No sales records found.")
+    else:
+        selected_po_check = st.selectbox(
+            "Select an Arpico PO to inspect",
+            sorted(
+                df["po_number"].dropna().astype(str).unique(),
+                reverse=True
+            ),
+            key="diagnostic_po"
+        )
+
+        po_check = df[
+            df["po_number"].astype(str) == selected_po_check
+        ].copy()
+
+        st.write("**Selected PO — sample items**")
+        st.dataframe(
+            po_check[
+                [
+                    "po_number", "outlet_name", "item_code",
+                    "item_name", "ordered_qty"
+                ]
+            ].head(10),
+            use_container_width=True
+        )
+
+        st.write("**Sales data — sample records**")
+        sales_columns = [
+            "po_number", "sold_to_party", "material_code",
+            "material_description", "invoiced_quantity",
+            "unit", "net_weight", "billing_date"
+        ]
+
+        available_columns = [
+            c for c in sales_columns if c in sales_check.columns
+        ]
+
+        st.dataframe(
+            sales_check[available_columns].head(10),
+            use_container_width=True
+        )
+
+except Exception as e:
+    st.error(f"Diagnostic check failed: {e}")
+
 
                 # Excel download
                 st.subheader("3. Download Report")
