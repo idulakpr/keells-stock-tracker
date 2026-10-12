@@ -1004,11 +1004,15 @@ elif main_menu == "📊 All-Channel Sales Analysis":
             )
 
 
+
 # =========================================================
 # ARPICO PO PDF UPLOAD
 # =========================================================
 
 elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
+
+    import io
+    import pdfplumber
 
     st.header("📄 Arpico Purchase Order PDF Upload")
 
@@ -1023,9 +1027,9 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
         if uploaded_pdf is not None:
 
             try:
-                import pdfplumber
-
-                with pdfplumber.open(uploaded_pdf) as pdf:
+                with pdfplumber.open(
+                    io.BytesIO(uploaded_pdf.getvalue())
+                ) as pdf:
                     page_texts = [
                         page.extract_text() or ""
                         for page in pdf.pages
@@ -1035,55 +1039,295 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
 
                 if not all_text.strip():
                     st.error(
-                        "PDF text could not be extracted. "
+                        "No selectable text found. "
                         "This PDF may require OCR."
                     )
-                    st.stop()
+                else:
+                    # -------------------------------------
+                    # 1. EXTRACT PO HEADER
+                    # -------------------------------------
 
-                st.subheader("Extracted PDF Text")
-                st.text_area(
-                    "Review extracted content",
-                    all_text[:15000],
-                    height=300
-                )
+                    date_match = re.search(
+                        r"\bDate\s+(\d{2}/\d{2}/\d{4})",
+                        all_text,
+                        re.IGNORECASE
+                    )
 
-                header_match = re.search(
-                    r"Date\s+(\d{2}/\d{2}/\d{4})\s+(\d+)",
-                    all_text,
-                    re.IGNORECASE
-                )
+                    po_match = re.search(
+                        r"(?m)^\s*(\d{4,})\s+Supplier\b",
+                        all_text,
+                        re.IGNORECASE
+                    )
 
-                if header_match:
-                    po_date_text = header_match.group(1)
-                    po_number = header_match.group(2)
+                    supplier_match = re.search(
+                        r"\bSupplier\s+([^\n]+)",
+                        all_text,
+                        re.IGNORECASE
+                    )
 
-                    po_date = datetime.datetime.strptime(
-                        po_date_text,
-                        "%d/%m/%Y"
-                    ).date()
+                    po_date = None
+                    po_number = (
+                        po_match.group(1) if po_match else None
+                    )
+                    supplier = (
+                        supplier_match.group(1).strip()
+                        if supplier_match else None
+                    )
 
-                    st.success("PO header detected.")
-                    c1, c2 = st.columns(2)
+                    if date_match:
+                        po_date = datetime.datetime.strptime(
+                            date_match.group(1),
+                            "%d/%m/%Y"
+                        ).date()
 
-                    c1.metric("PO Number", po_number)
-                    c2.metric(
+                    st.subheader("PO Header")
+
+                    h1, h2, h3 = st.columns(3)
+                    h1.metric("PO Number", po_number or "Not found")
+                    h2.metric(
                         "PO Date",
                         po_date.strftime("%d/%m/%Y")
+                        if po_date else "Not found"
                     )
-                else:
-                    st.warning(
-                        "PO number/date pattern not detected. "
-                        "Check the extracted text above."
+                    h3.metric(
+                        "Supplier",
+                        supplier or "Not found"
                     )
+
+                    # -------------------------------------
+                    # 2. PARSE ITEM ROWS
+                    # -------------------------------------
+
+                    item_pattern = re.compile(
+                        r"^\s*"
+                        r"(?P<order_no>\d+)\s+"
+                        r"(?P<item_code>GRRG\S+)\s+"
+                        r"(?P<description>.*?)\s+"
+                        r"(?P<rate>[\d,]+\.\d{3})\s+"
+                        r"(?P<qty>[\d,]+(?:\.\d+)?)\s+"
+                        r"(?P<amount>[\d,]+\.\d{3})\s+"
+                        r"(?P<vat>\d+(?:\.\d+)?)\s+"
+                        r"(?P<discount>\d+(?:\.\d+)?)\s+"
+                        r"(?P<plu>\d+)\s+"
+                        r"(?P<unitize>\d+)"
+                        r"(?:\s+(?P<remark>.*?))?\s*$"
+                    )
+
+                    rows = []
+                    current_outlet = None
+                    current_sub_outlet = None
+                    parse_warnings = []
+
+                    for line in all_text.splitlines():
+
+                        line = line.strip()
+
+                        # Detect outlet headings such as:
+                        # 02 Supply Kadawatha SC
+                        outlet_match = re.match(
+                            r"^\d{1,3}\s+Supply\s+(.+?)\s*$",
+                            line,
+                            re.IGNORECASE
+                        )
+
+                        if outlet_match:
+                            current_outlet = (
+                                outlet_match.group(1).strip()
+                            )
+                            current_sub_outlet = None
+                            continue
+
+                        # Central Warehouse has separate
+                        # Auto Ordering-location headings.
+                        if (
+                            current_outlet
+                            and current_outlet.lower()
+                            == "central warehouse"
+                            and line.lower().startswith("auto ordering-")
+                        ):
+                            current_sub_outlet = line.split(
+                                "-", 1
+                            )[1].strip()
+                            continue
+
+                        # Ignore ordinary headings and totals.
+                        if not re.match(r"^\d+\s+GRRG", line):
+                            continue
+
+                        item_match = item_pattern.match(line)
+
+                        if not item_match:
+                            parse_warnings.append(line)
+                            continue
+
+                        d = item_match.groupdict()
+
+                        remark = (d.get("remark") or "").strip()
+
+                        # For Central Warehouse, use the
+                        # individual destination as the outlet.
+                        if (
+                            current_outlet
+                            and current_outlet.lower()
+                            == "central warehouse"
+                        ):
+                            outlet_name = (
+                                remark
+                                or current_sub_outlet
+                                or "Central Warehouse"
+                            )
+                        else:
+                            outlet_name = current_outlet
+
+                        if not outlet_name:
+                            parse_warnings.append(
+                                "Outlet not detected: " + line
+                            )
+                            continue
+
+                        def to_number(value):
+                            return float(value.replace(",", ""))
+
+                        rows.append({
+                            "po_number": po_number,
+                            "po_date": (
+                                po_date.isoformat()
+                                if po_date else None
+                            ),
+                            "supplier": supplier,
+                            "outlet_name": outlet_name,
+                            "order_no": d["order_no"],
+                            "item_code": d["item_code"],
+                            "item_name": d["description"].strip(),
+                            "rate": to_number(d["rate"]),
+                            "ordered_qty": to_number(d["qty"]),
+                            "amount": to_number(d["amount"]),
+                            "vat": to_number(d["vat"]),
+                            "discount": to_number(d["discount"]),
+                            "plu": d["plu"],
+                            "unitize": to_number(d["unitize"]),
+                            "remark": remark or None,
+                            "source_file": uploaded_pdf.name
+                        })
+
+                    # -------------------------------------
+                    # 3. PREVIEW BEFORE SAVING
+                    # -------------------------------------
+
+                    st.subheader("Extracted PO Items")
+
+                    if not rows:
+                        st.error(
+                            "No item rows were extracted. "
+                            "Check the PDF text and item layout."
+                        )
+
+                    else:
+                        preview_df = pd.DataFrame(rows)
+
+                        st.success(
+                            f"Extracted {len(preview_df)} item rows "
+                            f"from {preview_df['outlet_name'].nunique()} "
+                            f"outlets/destinations."
+                        )
+
+                        st.dataframe(
+                            preview_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+                        if parse_warnings:
+                            with st.expander(
+                                f"Rows requiring review "
+                                f"({len(parse_warnings)})"
+                            ):
+                                st.warning(
+                                    "These item-like lines were not "
+                                    "parsed. Review them before saving."
+                                )
+                                st.code(
+                                    "\n".join(parse_warnings[:100])
+                                )
+
+                        st.download_button(
+                            "Download Preview as CSV",
+                            data=preview_df.to_csv(
+                                index=False
+                            ).encode("utf-8-sig"),
+                            file_name=(
+                                f"arpico_po_{po_number or 'preview'}.csv"
+                            ),
+                            mime="text/csv"
+                        )
+
+                        # Do not save incomplete headers or
+                        # rows that failed to parse.
+                        can_save = bool(
+                            po_number
+                            and po_date
+                            and not parse_warnings
+                        )
+
+                        if not can_save:
+                            st.warning(
+                                "Saving is disabled because the PO "
+                                "header is incomplete or some item "
+                                "rows need review."
+                            )
+
+                        if st.button(
+                            "💾 Save PO Items to Supabase",
+                            type="primary",
+                            disabled=not can_save,
+                            key="save_arpico_po"
+                        ):
+                            try:
+                                response = (
+                                    supabase
+                                    .table("arpico_po_items")
+                                    .upsert(
+                                        rows,
+                                        on_conflict=(
+                                            "po_number,order_no,item_code"
+                                        )
+                                    )
+                                    .execute()
+                                )
+
+                                st.success(
+                                    f"PO {po_number}: "
+                                    f"{len(rows)} item rows saved "
+                                    "successfully."
+                                )
+
+                            except Exception as save_error:
+                                st.error(
+                                    "Could not save PO items: "
+                                    f"{save_error}"
+                                )
+                                st.caption(
+                                    "Check that the arpico_po_items "
+                                    "table exists and that the "
+                                    "Supabase client has permission "
+                                    "to insert/update rows."
+                                )
+
+                    with st.expander("View extracted PDF text"):
+                        st.text_area(
+                            "PDF text",
+                            all_text[:20000],
+                            height=300
+                        )
 
             except ImportError:
                 st.error(
-                    "pdfplumber package is missing. "
-                    "Add pdfplumber to requirements.txt."
+                    "pdfplumber is missing. Add pdfplumber "
+                    "to requirements.txt."
                 )
 
             except Exception as e:
-                st.error(f"Could not read the PDF: {e}")
+                st.error(f"Could not process the PDF: {e}")
 
 elif main_menu == "📤 Upload New Stock (Admin)":
 
