@@ -1397,28 +1397,35 @@ elif main_menu == "📊 Arpico PO Analysis":
                         "Upload the SAP Sales Report first."
                     )
 
-                # Normalize codes and PO numbers
-                for col in ["po_number", "item_code", "outlet_name", "item_name"]:
-                    if col in po_df.columns:
-                        po_df[col] = po_df[col].fillna("").astype(str).str.strip()
+              
+                # Normalize PO numbers and material codes
+                for col in ["po_number", "material_code"]:
+                    if col in sales_df.columns:
+                        sales_df[col] = (
+                            sales_df[col]
+                            .fillna("")
+                            .astype(str)
+                            .str.strip()
+                        )
 
-               
-for col in ["po_number", "material_code"]:
-    if col in sales_df.columns:
-        sales_df[col] = (
-            sales_df[col]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-        )
+                sales_df["net_weight"] = pd.to_numeric(
+                    sales_df["net_weight"], errors="coerce"
+                ).fillna(0)
 
-sales_df["net_weight"] = pd.to_numeric(
-    sales_df["net_weight"], errors="coerce"
-).fillna(0)
+                po_df["po_number"] = (
+                    po_df["po_number"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
 
-po_df["po_number"] = (
-    po_df["po_number"].fillna("").astype(str).str.strip()
-)
+                po_df["item_code"] = (
+                    po_df["item_code"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+
 
 po_df["item_code"] = (
     po_df["item_code"].fillna("").astype(str).str.strip()
