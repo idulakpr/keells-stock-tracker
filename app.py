@@ -608,7 +608,7 @@ elif main_menu == "📊 All-Channel Sales Analysis":
 
 
 
-  st.header("📊 All-Channel Modern Trade Sales Analysis")
+     st.header("📊 All-Channel Modern Trade Sales Analysis")
 
     try:
         sales_df = fetch_all_rows("sales_history")
