@@ -1375,10 +1375,11 @@ elif main_menu == "📊 Arpico PO Analysis":
                         df["po_date"], errors="coerce"
                     )
 
+              
                 # Filters
                 st.subheader("Filters")
 
-                c1, c2 = st.columns(2)
+                c1, c2, c3 = st.columns(3)
 
                 with c1:
                     outlets = sorted(
@@ -1396,6 +1397,22 @@ elif main_menu == "📊 Arpico PO Analysis":
                     )
 
                 with c2:
+                    po_options = sorted(
+                        df["po_number"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist(),
+                        reverse=True
+                    )
+
+                    selected_pos = st.multiselect(
+                        "Select PO number",
+                        po_options,
+                        default=po_options
+                    )
+
+                with c3:
                     items = sorted(
                         df["item_name"]
                         .dropna()
@@ -1413,6 +1430,9 @@ elif main_menu == "📊 Arpico PO Analysis":
                 filtered = df[
                     df["outlet_name"].astype(str).isin(
                         selected_outlets
+                    )
+                    & df["po_number"].astype(str).isin(
+                        selected_pos
                     )
                     & df["item_name"].astype(str).isin(
                         selected_items
