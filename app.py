@@ -1043,36 +1043,28 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
                         "This PDF may require OCR."
                     )
                 else:
-                    # -------------------------------------
-                    # 1. EXTRACT PO HEADER
-                    # -------------------------------------
-
+                   
                     date_match = re.search(
                         r"\bDate\s+(\d{2}/\d{2}/\d{4})",
                         all_text,
                         re.IGNORECASE
                     )
 
+                    # The displayed PDF text contains a supplier
+                    # code, not a clearly labelled PO number.
                     po_match = re.search(
-                        r"(?m)^\s*(\d{4,})\s+Supplier\b",
+                        r"\b(?:PO\s*(?:No\.?|Number)|Purchase Order No\.?)"
+                        r"\s*[:#-]?\s*(\d+)",
                         all_text,
                         re.IGNORECASE
                     )
 
                     supplier_match = re.search(
-                        r"\bSupplier\s+([^\n]+)",
-                        all_text,
-                        re.IGNORECASE
+                        r"(?m)^\s*Supplier\s+\d+\s+(.+?)\s*(?:“|$)",
+                        all_text
                     )
 
                     po_date = None
-                    po_number = (
-                        po_match.group(1) if po_match else None
-                    )
-                    supplier = (
-                        supplier_match.group(1).strip()
-                        if supplier_match else None
-                    )
 
                     if date_match:
                         po_date = datetime.datetime.strptime(
@@ -1080,37 +1072,43 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
                             "%d/%m/%Y"
                         ).date()
 
-                    st.subheader("PO Header")
-
-                    h1, h2, h3 = st.columns(3)
-                    h1.metric("PO Number", po_number or "Not found")
-                    h2.metric(
-                        "PO Date",
-                        po_date.strftime("%d/%m/%Y")
-                        if po_date else "Not found"
+                    supplier = (
+                        supplier_match.group(1).strip()
+                        if supplier_match else None
                     )
-                    h3.metric(
-                        "Supplier",
-                        supplier or "Not found"
+
+                    # Use the PDF filename as a fallback identifier
+                    # because a separate PO number isn't visible
+                    # in the extracted text.
+                    po_number = (
+                        po_match.group(1)
+                        if po_match
+                        else (
+                            f"ARPICO-{po_date.isoformat()}-"
+                            f"{uploaded_pdf.name.rsplit('.', 1)[0]}"
+                            if po_date else None
+                        )
                     )
 
                     # -------------------------------------
                     # 2. PARSE ITEM ROWS
                     # -------------------------------------
 
+             
                     item_pattern = re.compile(
                         r"^\s*"
                         r"(?P<order_no>\d+)\s+"
+                        r"(?P<plu>\d+)\s+"
                         r"(?P<item_code>GRRG\S+)\s+"
                         r"(?P<description>.*?)\s+"
+                        r"(?P<unitize>\d+)\s+"
+                        r"(?P<remark>.*?)\s+"
                         r"(?P<rate>[\d,]+\.\d{3})\s+"
+                        r"(?P<discount>[\d,]+\.\d{2})\s+"
+                        r"(?P<vat>[\d,]+\.\d{2})\s+"
                         r"(?P<qty>[\d,]+(?:\.\d+)?)\s+"
-                        r"(?P<amount>[\d,]+\.\d{3})\s+"
-                        r"(?P<vat>\d+(?:\.\d+)?)\s+"
-                        r"(?P<discount>\d+(?:\.\d+)?)\s+"
-                        r"(?P<plu>\d+)\s+"
-                        r"(?P<unitize>\d+)"
-                        r"(?:\s+(?P<remark>.*?))?\s*$"
+                        r"(?P<amount>[\d,]+\.\d{3})"
+                        r"\s*$"
                     )
 
                     rows = []
@@ -1125,7 +1123,7 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
                         # Detect outlet headings such as:
                         # 02 Supply Kadawatha SC
                         outlet_match = re.match(
-                            r"^\d{1,3}\s+Supply\s+(.+?)\s*$",
+                            r"^Supply\s+\d{1,3}\s+(.+?)\s*$"
                             line,
                             re.IGNORECASE
                         )
