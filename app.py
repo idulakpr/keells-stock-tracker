@@ -7,6 +7,8 @@ import io
 import hashlib
 import json
 import math
+import re
+
 
 # =========================================================
 # PAGE CONFIGURATION
@@ -267,6 +269,7 @@ main_menu = st.sidebar.radio(
     [
         "📊 All-Channel Sales Analysis",
         "📤 Upload Sales Report (Admin)",
+        "📄 Arpico PO PDF Upload (Admin)",
         "🔍 Outlet Stock Search (Latest)",
         "⚠️ Zero Stock Report (Latest)",
         "🏬 Warehouse Stock (Latest)",
@@ -601,6 +604,88 @@ if main_menu == "📤 Upload Sales Report (Admin)":
 # =========================================================
 
 elif main_menu == "📊 All-Channel Sales Analysis":
+    
+# =========================================================
+# ARPICO PO PDF UPLOAD
+# =========================================================
+
+elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
+
+    st.header("📄 Arpico Purchase Order PDF Upload")
+
+    if check_admin_password():
+
+        uploaded_pdf = st.file_uploader(
+            "Upload Arpico Purchase Order PDF",
+            type=["pdf"],
+            key="arpico_po_pdf"
+        )
+
+        if uploaded_pdf is not None:
+
+            try:
+                import pdfplumber
+
+                with pdfplumber.open(uploaded_pdf) as pdf:
+                    page_texts = [
+                        page.extract_text() or ""
+                        for page in pdf.pages
+                    ]
+
+                all_text = "\n".join(page_texts)
+
+                if not all_text.strip():
+                    st.error(
+                        "PDF text could not be extracted. "
+                        "This PDF may require OCR."
+                    )
+                    st.stop()
+
+                st.subheader("Extracted PDF Text")
+                st.text_area(
+                    "Review extracted content",
+                    all_text[:15000],
+                    height=300
+                )
+
+                header_match = re.search(
+                    r"Date\s+(\d{2}/\d{2}/\d{4})\s+(\d+)",
+                    all_text,
+                    re.IGNORECASE
+                )
+
+                if header_match:
+                    po_date_text = header_match.group(1)
+                    po_number = header_match.group(2)
+
+                    po_date = datetime.datetime.strptime(
+                        po_date_text,
+                        "%d/%m/%Y"
+                    ).date()
+
+                    st.success("PO header detected.")
+                    c1, c2 = st.columns(2)
+
+                    c1.metric("PO Number", po_number)
+                    c2.metric(
+                        "PO Date",
+                        po_date.strftime("%d/%m/%Y")
+                    )
+                else:
+                    st.warning(
+                        "PO number/date pattern not detected. "
+                        "Check the extracted text above."
+                    )
+
+            except ImportError:
+                st.error(
+                    "pdfplumber package is missing. "
+                    "Add pdfplumber to requirements.txt."
+                )
+
+            except Exception as e:
+                st.error(f"Could not read the PDF: {e}")
+
 
     st.header("📊 All-Channel Modern Trade Sales Analysis")
 
