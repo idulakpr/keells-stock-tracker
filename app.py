@@ -6,10 +6,12 @@ import datetime
 import io
 import hashlib
 import json
+import math
 
 # =========================================================
 # PAGE CONFIGURATION
 # =========================================================
+
 st.set_page_config(
     page_title="Modern Trade Stock & Sales Dashboard",
     page_icon="📊",
@@ -22,13 +24,14 @@ st.caption("Stock Monitoring | OOS Analysis | All-Channel Sales Performance")
 # =========================================================
 # SUPABASE CONNECTION
 # =========================================================
+
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
 except Exception as e:
-    st.error("Supabase connection settings check කරන්න.")
+    st.error(f"Supabase connection settings check කරන්න: {e}")
     st.stop()
 
 if "is_admin" not in st.session_state:
@@ -39,13 +42,12 @@ def check_admin_password():
     if st.session_state.is_admin:
         return True
 
-    st.info("🔒 මෙම කොටස භාවිත කිරීමට Admin Access අවශ්‍ය වේ.")
+    st.info("🔒 Admin access අවශ්‍යයි.")
     password = st.text_input("Admin Password", type="password")
 
     if st.button("Unlock Admin Features"):
         if password == ADMIN_PASSWORD:
             st.session_state.is_admin = True
-            st.success("Admin login successful.")
             st.rerun()
         else:
             st.error("Incorrect password.")
@@ -56,6 +58,7 @@ def check_admin_password():
 # =========================================================
 # COMMON HELPERS
 # =========================================================
+
 DAIRY_SKUS = [
     "115281", "115282", "115283", "5285",
     "44132", "126507", "128484", "120115"
@@ -68,16 +71,6 @@ def categorize_by_sku(sku):
 
     sku = str(sku).split(".")[0].strip()
     return "Dairies" if sku in DAIRY_SKUS else "Rice"
-
-
-def clean_number(value):
-    if pd.isna(value):
-        return None
-
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return None
 
 
 def dataframe_to_excel(df, sheet_name="Report"):
@@ -94,11 +87,7 @@ def multi_sheet_excel(sheets):
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for sheet_name, df in sheets.items():
-            df.to_excel(
-                writer,
-                index=False,
-                sheet_name=sheet_name[:31]
-            )
+            df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
 
     return output.getvalue()
 
@@ -126,41 +115,70 @@ def fetch_all_rows(table_name, page_size=1000):
     return pd.DataFrame(rows)
 
 
-# =========================================================
-# STOCK HELPERS
-# =========================================================
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_all_batch_data(selected_batch):
-    rows = []
-    page_size = 1000
-    start = 0
+def make_json_safe(value):
+    """
+    Convert pandas/Python values into JSON-compatible values.
+    Handles date, datetime, NaN, infinity and NumPy scalar values.
+    """
+    if value is None:
+        return None
 
-    while True:
-        response = (
-            supabase.table("stock_history")
-            .select("*")
-            .eq("Uploaded_At", selected_batch)
-            .range(start, start + page_size - 1)
-            .execute()
-        )
+    if not pd.api.types.is_scalar(value):
+        return str(value)
 
-        batch = response.data or []
-        rows.extend(batch)
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
 
-        if len(batch) < page_size:
-            break
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
 
-        start += page_size
+    if hasattr(value, "item"):
+        value = value.item()
 
-    df = pd.DataFrame(rows)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
 
-    if not df.empty and {"Store", "SKU"}.issubset(df.columns):
-        df = df.drop_duplicates(
-            subset=["Store", "SKU"],
-            keep="last"
-        )
+    return value
 
-    return df
+
+def make_row_hash(row):
+    """
+    Create a stable hash from the business fields of a sales line.
+    Identical lines are ignored on subsequent uploads.
+    """
+    fields = [
+        "billing_date",
+        "sap_invoice_number",
+        "sales_group",
+        "customer_code",
+        "sold_to_party",
+        "material_group",
+        "material_code",
+        "material_description",
+        "invoiced_quantity",
+        "unit",
+        "net_weight",
+        "unit_of_weight",
+        "net_value_usd",
+        "po_number",
+        "special_instructions",
+    ]
+
+    values = {}
+
+    for field in fields:
+        values[field] = make_json_safe(row.get(field))
+
+    payload = json.dumps(
+        values,
+        sort_keys=True,
+        ensure_ascii=False
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def get_unique_badges():
@@ -197,63 +215,44 @@ def get_unique_badges():
     return []
 
 
-def format_lkr(value):
-    try:
-        return "LKR " + format(float(value), ",.2f")
-    except (ValueError, TypeError):
-        return "LKR 0.00"
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_all_batch_data(selected_batch):
+    rows = []
+    page_size = 1000
+    start = 0
 
+    while True:
+        response = (
+            supabase.table("stock_history")
+            .select("*")
+            .eq("Uploaded_At", selected_batch)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
 
-def make_row_hash(row):
-    """
-    Identical source lines receive the same hash, even if uploaded
-    under a different batch name.
-    """
-    fields = [
-        "billing_date",
-        "sap_invoice_number",
-        "sales_group",
-        "customer_code",
-        "sold_to_party",
-        "material_group",
-        "material_code",
-        "material_description",
-        "invoiced_quantity",
-        "unit",
-        "net_weight",
-        "unit_of_weight",
-        "net_value_usd",
-        "po_number",
-        "special_instructions",
-    ]
+        batch = response.data or []
+        rows.extend(batch)
 
-    values = {}
+        if len(batch) < page_size:
+            break
 
-    for field in fields:
-        value = row.get(field)
+        start += page_size
 
-        if pd.isna(value):
-            value = None
-        elif hasattr(value, "isoformat"):
-            value = value.isoformat()
-        elif hasattr(value, "item"):
-            value = value.item()
+    df = pd.DataFrame(rows)
 
-        values[field] = value
+    if not df.empty and {"Store", "SKU"}.issubset(df.columns):
+        df = df.drop_duplicates(
+            subset=["Store", "SKU"],
+            keep="last"
+        )
 
-    payload = json.dumps(
-        values,
-        sort_keys=True,
-        default=str,
-        ensure_ascii=False
-    )
-
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return df
 
 
 # =========================================================
 # NAVIGATION
 # =========================================================
+
 st.sidebar.title("📌 Navigation")
 
 if st.session_state.is_admin:
@@ -280,26 +279,19 @@ main_menu = st.sidebar.radio(
 
 st.markdown("---")
 
-try:
-    stock_badges = get_unique_badges()
-except Exception:
-    stock_badges = []
-
+stock_badges = get_unique_badges()
 latest_badge = stock_badges[0] if stock_badges else None
 
 
 # =========================================================
-# 1. UPLOAD SALES REPORT
+# 1. SALES REPORT UPLOAD
 # =========================================================
+
 if main_menu == "📤 Upload Sales Report (Admin)":
+
     st.header("📤 Upload Modern Trade Sales Report")
 
     if check_admin_password():
-        st.write(
-            "Excel sales report එක upload කරන්න. "
-            "Report එකේ column headings පහත sales report format එකට "
-            "ගැළපිය යුතුයි."
-        )
 
         batch_note = st.text_input(
             "Upload description",
@@ -313,16 +305,24 @@ if main_menu == "📤 Upload Sales Report (Admin)":
         )
 
         if uploaded_sales_file is not None:
+
             try:
                 sales_df = pd.read_excel(uploaded_sales_file)
                 sales_df.columns = [
-                    str(c).strip() for c in sales_df.columns
+                    str(col).strip() for col in sales_df.columns
                 ]
 
-                st.write("Preview of uploaded file")
-                st.dataframe(sales_df.head(10), use_container_width=True)
+                st.subheader("Sales Report Preview")
+                st.dataframe(
+                    sales_df.head(10),
+                    use_container_width=True
+                )
 
-                if st.button("🚀 Upload Sales Data", type="primary"):
+                if st.button(
+                    "🚀 Upload Sales Data",
+                    type="primary"
+                ):
+
                     required_columns = [
                         "Billing Date",
                         "SAP Invoice Number",
@@ -348,8 +348,10 @@ if main_menu == "📤 Upload Sales Report (Admin)":
 
                     if missing:
                         st.error(
-                            "Missing columns: " + ", ".join(missing)
+                            "Missing Excel columns: "
+                            + ", ".join(missing)
                         )
+
                     else:
                         rename_columns = {
                             "Billing Date": "billing_date",
@@ -373,26 +375,42 @@ if main_menu == "📤 Upload Sales Report (Admin)":
                             columns=rename_columns
                         ).copy()
 
-                        # Source example uses dates such as 10/1/2026.
-                        # This is interpreted as October 1, 2026.
+                        # -------------------------------------------------
+                        # DATE CONVERSION
+                        # -------------------------------------------------
+                        # Excel dates are parsed before hashing.
+                        # Dates are converted to ISO strings before upload.
+
                         df["billing_date"] = pd.to_datetime(
                             df["billing_date"],
                             errors="coerce"
                         ).dt.date
 
-                        df = df.dropna(subset=["billing_date"])
+                        invalid_dates = int(
+                            df["billing_date"].isna().sum()
+                        )
 
-                        numeric_columns = [
+                        df = df.dropna(
+                            subset=["billing_date"]
+                        ).copy()
+
+                        # -------------------------------------------------
+                        # NUMERIC CONVERSION
+                        # -------------------------------------------------
+
+                        for col in [
                             "invoiced_quantity",
                             "net_weight",
                             "net_value_usd",
-                        ]
-
-                        for col in numeric_columns:
+                        ]:
                             df[col] = pd.to_numeric(
                                 df[col],
                                 errors="coerce"
                             )
+
+                        # -------------------------------------------------
+                        # TEXT CONVERSION
+                        # -------------------------------------------------
 
                         text_columns = [
                             "sap_invoice_number",
@@ -410,17 +428,40 @@ if main_menu == "📤 Upload Sales Report (Admin)":
 
                         for col in text_columns:
                             df[col] = df[col].apply(
-                                lambda x: None if pd.isna(x) else str(x).strip()
+                                lambda value: (
+                                    None
+                                    if pd.isna(value)
+                                    else str(value).strip()
+                                )
                             )
 
-                        df["upload_batch"] = (
-                            f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                            f"_{batch_note.strip() or 'SalesUpload'}"
+                        # -------------------------------------------------
+                        # BATCH ID
+                        # -------------------------------------------------
+
+                        batch_timestamp = datetime.datetime.now().strftime(
+                            "%Y%m%d_%H%M%S"
                         )
 
-                        df["row_hash"] = df.apply(make_row_hash, axis=1)
+                        safe_note = (
+                            batch_note.strip()
+                            or "SalesUpload"
+                        )
 
-                        # Remove identical lines within this Excel file.
+                        upload_batch = (
+                            f"{batch_timestamp}_{safe_note}"
+                        )
+
+                        df["upload_batch"] = upload_batch
+
+                        # Hash is created while billing_date is still
+                        # a Python date. make_row_hash safely converts it.
+                        df["row_hash"] = df.apply(
+                            make_row_hash,
+                            axis=1
+                        )
+
+                        # Remove duplicates within this Excel file.
                         df = df.drop_duplicates(
                             subset=["row_hash"],
                             keep="first"
@@ -447,64 +488,120 @@ if main_menu == "📤 Upload Sales Report (Admin)":
                         ]
 
                         df = df[db_columns]
-                        df = df.where(pd.notnull(df), None)
 
-                        records = df.to_dict(orient="records")
+                        records = df.to_dict(
+                            orient="records"
+                        )
 
-                        if not records:
-                            st.warning("No valid sales rows found.")
+                        # -------------------------------------------------
+                        # CRITICAL FIX:
+                        # Convert EVERY field to a JSON-safe value.
+                        # This prevents "date is not JSON serializable".
+                        # -------------------------------------------------
+
+                        safe_records = []
+
+                        for record in records:
+                            safe_record = {
+                                key: make_json_safe(value)
+                                for key, value in record.items()
+                            }
+
+                            safe_records.append(safe_record)
+
+                        if not safe_records:
+                            st.warning(
+                                "No valid sales rows found."
+                            )
+
                         else:
                             progress = st.progress(0)
-                            uploaded_count = 0
+                            status = st.empty()
 
                             try:
                                 chunk_size = 200
+                                total_rows = len(safe_records)
 
-                                for i in range(0, len(records), chunk_size):
-                                    chunk = records[i:i + chunk_size]
+                                for i in range(
+                                    0,
+                                    total_rows,
+                                    chunk_size
+                                ):
+                                    chunk = safe_records[
+                                        i:i + chunk_size
+                                    ]
 
-                                    # Existing row_hash values are ignored
-                                    # instead of being inserted again.
-                                    supabase.table("sales_history").upsert(
+                                    supabase.table(
+                                        "sales_history"
+                                    ).upsert(
                                         chunk,
                                         on_conflict="row_hash",
                                         ignore_duplicates=True
                                     ).execute()
 
-                                    uploaded_count = min(
+                                    completed = min(
                                         i + len(chunk),
-                                        len(records)
+                                        total_rows
                                     )
+
                                     progress.progress(
-                                        uploaded_count / len(records)
+                                        completed / total_rows
+                                    )
+
+                                    status.write(
+                                        f"Processed {completed:,} "
+                                        f"of {total_rows:,} rows"
                                     )
 
                                 st.cache_data.clear()
+
                                 st.success(
-                                    f"Upload completed. Processed "
-                                    f"{len(records):,} unique rows. "
-                                    f"Existing duplicate rows are ignored."
+                                    "Sales upload completed successfully!"
                                 )
+
+                                st.write(
+                                    f"**Upload batch:** {upload_batch}"
+                                )
+
+                                st.write(
+                                    f"**Unique rows processed:** "
+                                    f"{total_rows:,}"
+                                )
+
+                                if invalid_dates:
+                                    st.warning(
+                                        f"{invalid_dates} rows with "
+                                        "invalid billing dates were skipped."
+                                    )
+
                                 st.info(
-                                    "Sales values are displayed as LKR, "
-                                    "without currency conversion."
+                                    "Sales values are displayed as LKR "
+                                    "without exchange-rate conversion. "
+                                    "Existing identical rows are ignored."
                                 )
 
                             except Exception as e:
                                 st.error(
-                                    "Sales upload failed. Check the "
-                                    "sales_history table and its columns. "
-                                    f"Error: {e}"
+                                    f"Sales upload failed: {e}"
+                                )
+
+                                st.caption(
+                                    "Check the sales_history table schema, "
+                                    "database permissions and column types."
                                 )
 
             except Exception as e:
-                st.error(f"Could not read Excel file: {e}")
+                st.error(
+                    f"Could not read the Excel file: {e}"
+                )
 
 
 # =========================================================
 # 2. ALL-CHANNEL SALES ANALYSIS
 # =========================================================
+
 elif main_menu == "📊 All-Channel Sales Analysis":
+
     st.header("📊 All-Channel Modern Trade Sales Analysis")
 
     try:
@@ -514,11 +611,13 @@ elif main_menu == "📊 All-Channel Sales Analysis":
         sales_df = pd.DataFrame()
 
     if sales_df.empty:
+
         st.warning(
-            "Sales data not available yet. Upload a report from "
-            "'Upload Sales Report (Admin)'."
+            "No sales data found. Upload a sales report first."
         )
+
     else:
+
         sales_df["billing_date"] = pd.to_datetime(
             sales_df["billing_date"],
             errors="coerce"
@@ -534,7 +633,9 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 errors="coerce"
             ).fillna(0)
 
-        sales_df = sales_df.dropna(subset=["billing_date"])
+        sales_df = sales_df.dropna(
+            subset=["billing_date"]
+        )
 
         min_date = sales_df["billing_date"].min().date()
         max_date = sales_df["billing_date"].max().date()
@@ -603,8 +704,12 @@ elif main_menu == "📊 All-Channel Sales Analysis":
             )
 
         filtered = filtered[
-            filtered["sold_to_party"].astype(str).isin(selected_channels)
-            & filtered["material_description"].astype(str).isin(selected_items)
+            filtered["sold_to_party"].astype(str).isin(
+                selected_channels
+            )
+            & filtered["material_description"].astype(str).isin(
+                selected_items
+            )
         ].copy()
 
         total_sales = filtered["net_value_usd"].sum()
@@ -617,33 +722,56 @@ elif main_menu == "📊 All-Channel Sales Analysis":
 
         m1, m2, m3, m4 = st.columns(4)
 
-        m1.metric("Total Sales Value", format_lkr(total_sales))
-        m2.metric("Total Net Weight", f"{total_weight:,.2f} kg")
-        m3.metric("Unique Invoices", f"{invoice_count:,}")
-        m4.metric("Active Channels", f"{channel_count:,}")
+        m1.metric(
+            "Total Sales Value",
+            f"LKR {total_sales:,.2f}"
+        )
+
+        m2.metric(
+            "Total Net Weight",
+            f"{total_weight:,.2f} kg"
+        )
+
+        m3.metric(
+            "Unique Invoices",
+            f"{invoice_count:,}"
+        )
+
+        m4.metric(
+            "Active Channels",
+            f"{channel_count:,}"
+        )
 
         st.caption(
             "Currency note: the source column is named 'Net Value (USD)', "
-            "but this dashboard displays its values as LKR as requested. "
-            "No exchange-rate conversion is applied."
+            "but values are displayed as LKR as requested. "
+            "No currency conversion is applied."
         )
 
         if filtered.empty:
-            st.warning("No sales data matches the selected filters.")
+
+            st.warning("No sales data matches your filters.")
+
         else:
+
+            # DAILY TREND
             st.markdown("---")
             st.subheader("📈 Daily Sales Trend")
 
+            daily_source = filtered.copy()
+            daily_source["Billing Date"] = (
+                daily_source["billing_date"].dt.date
+            )
+
             daily = (
-                filtered.groupby(
-                    filtered["billing_date"].dt.date,
+                daily_source.groupby(
+                    "Billing Date",
                     as_index=False
                 )["net_value_usd"]
                 .sum()
                 .rename(
                     columns={
-                        "billing_date": "Billing Date",
-                        "net_value_usd": "Sales Value (LKR)",
+                        "net_value_usd": "Sales Value (LKR)"
                     }
                 )
             )
@@ -655,20 +783,33 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 markers=True,
                 title="Daily Sales Value (LKR)"
             )
-            st.plotly_chart(fig_daily, use_container_width=True)
 
+            st.plotly_chart(
+                fig_daily,
+                use_container_width=True
+            )
+
+            # MONTHLY TREND
             st.subheader("📅 Monthly Sales Trend")
 
             monthly_source = filtered.copy()
+
             monthly_source["Month"] = (
-                monthly_source["billing_date"].dt.to_period("M").astype(str)
+                monthly_source["billing_date"]
+                .dt.to_period("M")
+                .astype(str)
             )
 
             monthly = (
-                monthly_source.groupby("Month", as_index=False)
-                ["net_value_usd"].sum()
+                monthly_source.groupby(
+                    "Month",
+                    as_index=False
+                )["net_value_usd"]
+                .sum()
                 .rename(
-                    columns={"net_value_usd": "Sales Value (LKR)"}
+                    columns={
+                        "net_value_usd": "Sales Value (LKR)"
+                    }
                 )
             )
 
@@ -676,16 +817,23 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 monthly,
                 x="Month",
                 y="Sales Value (LKR)",
-                title="Monthly Sales Value (LKR)",
-                text_auto=".2s"
+                title="Monthly Sales Value (LKR)"
             )
-            st.plotly_chart(fig_monthly, use_container_width=True)
 
+            st.plotly_chart(
+                fig_monthly,
+                use_container_width=True
+            )
+
+            # CHANNEL SUMMARY
             st.markdown("---")
             st.subheader("🏬 Channel-wise Performance")
 
             channel_summary = (
-                filtered.groupby("sold_to_party", dropna=False)
+                filtered.groupby(
+                    "sold_to_party",
+                    dropna=False
+                )
                 .agg(
                     Sales_Value_LKR=("net_value_usd", "sum"),
                     Net_Weight=("net_weight", "sum"),
@@ -693,13 +841,19 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                     Item_Count=("material_code", "nunique"),
                 )
                 .reset_index()
-                .rename(columns={"sold_to_party": "Channel"})
-                .sort_values("Sales_Value_LKR", ascending=False)
+                .rename(
+                    columns={"sold_to_party": "Channel"}
+                )
+                .sort_values(
+                    "Sales_Value_LKR",
+                    ascending=False
+                )
             )
 
             channel_summary["Sales_Value_LKR"] = (
                 channel_summary["Sales_Value_LKR"].round(2)
             )
+
             channel_summary["Net_Weight"] = (
                 channel_summary["Net_Weight"].round(2)
             )
@@ -708,10 +862,13 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 channel_summary,
                 x="Channel",
                 y="Sales_Value_LKR",
-                title="Channel-wise Sales Value (LKR)",
-                text_auto=".2s"
+                title="Channel-wise Sales Value (LKR)"
             )
-            st.plotly_chart(fig_channel, use_container_width=True)
+
+            st.plotly_chart(
+                fig_channel,
+                use_container_width=True
+            )
 
             st.dataframe(
                 channel_summary,
@@ -719,12 +876,16 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 hide_index=True
             )
 
+            # ITEM SUMMARY
             st.markdown("---")
             st.subheader("📦 Item-wise Performance")
 
             item_summary = (
                 filtered.groupby(
-                    ["material_code", "material_description"],
+                    [
+                        "material_code",
+                        "material_description",
+                    ],
                     dropna=False
                 )
                 .agg(
@@ -740,15 +901,20 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                         "material_description": "Material Description",
                     }
                 )
-                .sort_values("Sales_Value_LKR", ascending=False)
+                .sort_values(
+                    "Sales_Value_LKR",
+                    ascending=False
+                )
             )
 
             item_summary["Sales_Value_LKR"] = (
                 item_summary["Sales_Value_LKR"].round(2)
             )
+
             item_summary["Invoiced_Quantity"] = (
                 item_summary["Invoiced_Quantity"].round(2)
             )
+
             item_summary["Net_Weight"] = (
                 item_summary["Net_Weight"].round(2)
             )
@@ -757,11 +923,17 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 item_summary.head(20),
                 x="Material Description",
                 y="Sales_Value_LKR",
-                title="Top 20 Items by Sales Value (LKR)",
-                text_auto=".2s"
+                title="Top 20 Items by Sales Value (LKR)"
             )
-            fig_items.update_layout(xaxis_tickangle=-35)
-            st.plotly_chart(fig_items, use_container_width=True)
+
+            fig_items.update_layout(
+                xaxis_tickangle=-35
+            )
+
+            st.plotly_chart(
+                fig_items,
+                use_container_width=True
+            )
 
             st.dataframe(
                 item_summary,
@@ -769,12 +941,15 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 hide_index=True
             )
 
+            # DETAILED RECORDS
             st.markdown("---")
             st.subheader("📋 Detailed Sales Records")
 
             display_df = filtered.copy()
+
             display_df["billing_date"] = (
-                display_df["billing_date"].dt.date.astype(str)
+                display_df["billing_date"]
+                .dt.strftime("%Y-%m-%d")
             )
 
             display_df = display_df.rename(
@@ -811,11 +986,9 @@ elif main_menu == "📊 All-Channel Sales Analysis":
                 "Detailed_Sales": display_df,
             }
 
-            excel_bytes = multi_sheet_excel(export_sheets)
-
             st.download_button(
                 "📥 Download Complete Sales Report (Excel)",
-                data=excel_bytes,
+                data=multi_sheet_excel(export_sheets),
                 file_name="Modern_Trade_Sales_Analysis.xlsx",
                 mime=(
                     "application/vnd.openxmlformats-officedocument."
@@ -827,10 +1000,13 @@ elif main_menu == "📊 All-Channel Sales Analysis":
 # =========================================================
 # 3. UPLOAD NEW STOCK
 # =========================================================
+
 elif main_menu == "📤 Upload New Stock (Admin)":
+
     st.header("📤 Upload Daily Stock File")
 
     if check_admin_password():
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -842,10 +1018,17 @@ elif main_menu == "📤 Upload New Stock (Admin)":
         with col2:
             batch_num = st.selectbox(
                 "Upload Batch",
-                ["Batch 1", "Batch 2", "Batch 3", "Batch 4", "Batch 5"]
+                [
+                    "Batch 1",
+                    "Batch 2",
+                    "Batch 3",
+                    "Batch 4",
+                    "Batch 5",
+                ]
             )
 
         note = st.text_input("Optional Note")
+
         badge = f"{upload_date.isoformat()} - {batch_num}"
 
         if note.strip():
@@ -854,7 +1037,9 @@ elif main_menu == "📤 Upload New Stock (Admin)":
         st.info(f"Upload batch: {badge}")
 
         if badge in stock_badges:
-            st.warning("This batch already exists. Uploading will replace it.")
+            st.warning(
+                "This batch already exists. Uploading will replace it."
+            )
 
         stock_file = st.file_uploader(
             "Choose Stock Excel File",
@@ -863,6 +1048,7 @@ elif main_menu == "📤 Upload New Stock (Admin)":
         )
 
         if stock_file and st.button("Save Stock to Database"):
+
             try:
                 df = pd.read_excel(stock_file)
 
@@ -877,12 +1063,15 @@ elif main_menu == "📤 Upload New Stock (Admin)":
                 df = df.rename(columns=rename_dict)
 
                 if "SKU" not in df.columns or "Store" not in df.columns:
-                    st.error("Excel file must contain SKU and Store columns.")
+                    st.error(
+                        "Excel file must contain SKU and Store columns."
+                    )
                     st.stop()
 
                 df["SKU"] = df["SKU"].astype(str).apply(
                     lambda x: x.split(".")[0].strip()
                 )
+
                 df["Category"] = df["SKU"].apply(categorize_by_sku)
 
                 if "Current_Stock_Units" in df.columns:
@@ -905,12 +1094,19 @@ elif main_menu == "📤 Upload New Stock (Admin)":
                     "Last_Update_Time",
                 ]
 
-                df = df[[c for c in valid_columns if c in df.columns]]
-                df = df.where(pd.notnull(df), None)
+                df = df[
+                    [c for c in valid_columns if c in df.columns]
+                ]
+
+                df = df.astype(object).where(
+                    pd.notnull(df),
+                    None
+                )
 
                 if badge in stock_badges:
                     supabase.table("stock_history").delete().eq(
-                        "Uploaded_At", badge
+                        "Uploaded_At",
+                        badge
                     ).execute()
 
                 records = df.to_dict(orient="records")
@@ -918,7 +1114,19 @@ elif main_menu == "📤 Upload New Stock (Admin)":
 
                 for i in range(0, len(records), 200):
                     chunk = records[i:i + 200]
-                    supabase.table("stock_history").insert(chunk).execute()
+
+                    safe_chunk = [
+                        {
+                            key: make_json_safe(value)
+                            for key, value in record.items()
+                        }
+                        for record in chunk
+                    ]
+
+                    supabase.table("stock_history").insert(
+                        safe_chunk
+                    ).execute()
+
                     progress.progress(
                         min((i + len(chunk)) / len(records), 1.0)
                     )
@@ -934,12 +1142,16 @@ elif main_menu == "📤 Upload New Stock (Admin)":
 # =========================================================
 # 4. MANAGE / DELETE STOCK UPLOADS
 # =========================================================
+
 elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
+
     st.header("🗑️ Manage Stock Uploads")
 
     if check_admin_password():
+
         if not stock_badges:
             st.info("No stock uploads found.")
+
         else:
             selected_batch = st.selectbox(
                 "Select stock batch to delete",
@@ -951,9 +1163,11 @@ elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
             )
 
             if st.button("Delete Selected Stock Batch"):
+
                 try:
                     supabase.table("stock_history").delete().eq(
-                        "Uploaded_At", selected_batch
+                        "Uploaded_At",
+                        selected_batch
                     ).execute()
 
                     st.cache_data.clear()
@@ -967,30 +1181,40 @@ elif main_menu == "🗑️ Manage / Delete Uploads (Admin)":
 # =========================================================
 # 5. MANAGE / DELETE SALES UPLOADS
 # =========================================================
+
 elif main_menu == "🗑️ Manage Sales Uploads (Admin)":
+
     st.header("🗑️ Manage Sales Uploads")
 
     if check_admin_password():
+
         try:
             sales_df = fetch_all_rows("sales_history")
 
             if sales_df.empty:
                 st.info("No sales uploads found.")
+
             else:
                 batches = sorted(
-                    sales_df["upload_batch"].dropna().unique().tolist(),
+                    sales_df["upload_batch"]
+                    .dropna()
+                    .unique()
+                    .tolist(),
                     reverse=True
                 )
 
-                st.write("Sales upload batches")
-                st.dataframe(
+                batch_summary = (
                     sales_df.groupby("upload_batch")
                     .agg(
                         Rows=("row_hash", "count"),
                         From_Date=("billing_date", "min"),
                         To_Date=("billing_date", "max"),
                     )
-                    .reset_index(),
+                    .reset_index()
+                )
+
+                st.dataframe(
+                    batch_summary,
                     use_container_width=True,
                     hide_index=True
                 )
@@ -1001,13 +1225,15 @@ elif main_menu == "🗑️ Manage Sales Uploads (Admin)":
                 )
 
                 st.warning(
-                    "This permanently deletes all rows belonging to the "
+                    "This permanently deletes every sales row in the "
                     "selected upload batch."
                 )
 
                 if st.button("Delete Selected Sales Batch"):
+
                     supabase.table("sales_history").delete().eq(
-                        "upload_batch", selected_sales_batch
+                        "upload_batch",
+                        selected_sales_batch
                     ).execute()
 
                     st.cache_data.clear()
@@ -1015,17 +1241,20 @@ elif main_menu == "🗑️ Manage Sales Uploads (Admin)":
                     st.rerun()
 
         except Exception as e:
-            st.error(f"Could not load sales upload batches: {e}")
+            st.error(f"Could not load sales batches: {e}")
 
 
 # =========================================================
 # 6. HISTORICAL OOS TREND ANALYSIS
 # =========================================================
+
 elif main_menu == "📈 Historical OOS Trend Analysis":
+
     st.header("📈 Historical OOS Trend Analysis")
 
     if not stock_badges:
         st.warning("No stock history found. Upload stock files first.")
+
     else:
         col1, col2 = st.columns(2)
 
@@ -1058,11 +1287,13 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                 if start_date <= badge_date <= end_date:
                     filtered_badges.append(badge)
+
             except Exception:
                 continue
 
         if not filtered_badges:
             st.warning("No stock uploads found in this date range.")
+
         else:
             mode = st.radio(
                 "Analysis Type",
@@ -1099,15 +1330,23 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
             )
 
             if mode == "Item-wise Analysis":
-                cat_sample = sample[sample["Category"] == category]
+
+                cat_sample = sample[
+                    sample["Category"] == category
+                ]
+
                 item_options = sorted(
-                    cat_sample[item_col].dropna().astype(str).unique()
+                    cat_sample[item_col]
+                    .dropna()
+                    .astype(str)
+                    .unique()
                 )
 
                 selected_item = st.selectbox(
                     "Select Item",
                     ["All Items"] + item_options
                 )
+
             else:
                 non_outlet = (
                     sample[store_col].astype(str).str.contains(
@@ -1136,9 +1375,11 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                 )
 
             if st.button("Generate OOS Trend"):
+
                 trend_rows = []
 
                 for badge in filtered_badges:
+
                     batch_df = fetch_all_batch_data(badge)
 
                     if batch_df.empty:
@@ -1171,6 +1412,7 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                     )
 
                     outlet_df = batch_df[~non_outlet].copy()
+
                     outlet_df["Current_Stock_Units"] = pd.to_numeric(
                         outlet_df.get(
                             "Current_Stock_Units",
@@ -1185,6 +1427,7 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                     ]
 
                     if mode == "Item-wise Analysis":
+
                         if selected_item != "All Items":
                             zero_df = zero_df[
                                 zero_df[batch_item_col].astype(str)
@@ -1192,6 +1435,7 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                             ]
 
                         count = zero_df[batch_store_col].nunique()
+
                         details = ", ".join(
                             sorted(
                                 zero_df[batch_store_col]
@@ -1208,6 +1452,7 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                         })
 
                     else:
+
                         if selected_outlet != "All Outlets":
                             zero_df = zero_df[
                                 zero_df[batch_store_col].astype(str)
@@ -1215,6 +1460,7 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
                             ]
 
                         count = zero_df[batch_item_col].nunique()
+
                         details = ", ".join(
                             sorted(
                                 zero_df[batch_item_col]
@@ -1234,23 +1480,28 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 
                 if trend_df.empty:
                     st.warning("No OOS data found.")
+
                 else:
-                    if mode == "Item-wise Analysis":
-                        y_col = "OOS Outlets Count"
-                    else:
-                        y_col = "OOS Items Count"
+                    y_col = (
+                        "OOS Outlets Count"
+                        if mode == "Item-wise Analysis"
+                        else "OOS Items Count"
+                    )
 
                     fig = px.line(
                         trend_df,
                         x="Batch / Date",
                         y=y_col,
                         markers=True,
-                        text=y_col,
                         title=f"{category} — {mode}"
                     )
 
                     fig.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig, use_container_width=True)
+
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True
+                    )
 
                     st.dataframe(
                         trend_df,
@@ -1275,21 +1526,26 @@ elif main_menu == "📈 Historical OOS Trend Analysis":
 # =========================================================
 # 7. LATEST STOCK DASHBOARDS
 # =========================================================
+
 elif main_menu in [
     "🔍 Outlet Stock Search (Latest)",
     "⚠️ Zero Stock Report (Latest)",
     "🏬 Warehouse Stock (Latest)",
 ]:
+
     st.header(main_menu)
 
     if not latest_badge:
-        st.warning("No stock uploads found. Upload a stock file first.")
+        st.warning(
+            "No stock uploads found. Upload a stock file first."
+        )
         st.stop()
 
     st.caption(f"Latest Stock Update: {latest_badge}")
 
     try:
         df = fetch_all_batch_data(latest_badge)
+
     except Exception as e:
         st.error(f"Could not retrieve stock data: {e}")
         st.stop()
@@ -1302,7 +1558,10 @@ elif main_menu in [
         df["SKU"] = df["SKU"].astype(str).apply(
             lambda x: x.split(".")[0].strip()
         )
-        df["Category"] = df["SKU"].apply(categorize_by_sku)
+
+        df["Category"] = df["SKU"].apply(
+            categorize_by_sku
+        )
 
     df["Current_Stock_Units"] = pd.to_numeric(
         df.get(
@@ -1350,25 +1609,40 @@ elif main_menu in [
 
     # OUTLET STOCK SEARCH
     if main_menu == "🔍 Outlet Stock Search (Latest)":
+
         outlets = sorted(
-            outlets_df[store_col].dropna().astype(str).unique()
+            outlets_df[store_col]
+            .dropna()
+            .astype(str)
+            .unique()
         )
 
         if not outlets:
             st.warning("No outlet stock records found.")
+
         else:
-            selected_outlet = st.selectbox("Select Outlet", outlets)
+            selected_outlet = st.selectbox(
+                "Select Outlet",
+                outlets
+            )
 
             outlet_data = outlets_df[
                 outlets_df[store_col].astype(str) == selected_outlet
             ]
 
             item_options = sorted(
-                outlet_data[item_col].dropna().astype(str).unique()
+                outlet_data[item_col]
+                .dropna()
+                .astype(str)
+                .unique()
             )
 
             if item_options:
-                selected_item = st.selectbox("Select Item", item_options)
+
+                selected_item = st.selectbox(
+                    "Select Item",
+                    item_options
+                )
 
                 details = outlet_data[
                     outlet_data[item_col].astype(str) == selected_item
@@ -1383,8 +1657,13 @@ elif main_menu in [
                     f"{details.get('Current_Stock_Units', 0):,.0f}"
                 )
 
-                c2.write(f"**SKU:** {details.get('SKU', 'N/A')}")
-                c2.write(f"**Category:** {details.get('Category', 'N/A')}")
+                c2.write(
+                    f"**SKU:** {details.get('SKU', 'N/A')}"
+                )
+
+                c2.write(
+                    f"**Category:** {details.get('Category', 'N/A')}"
+                )
 
                 st.write(
                     f"**Last System Update:** "
@@ -1398,11 +1677,15 @@ elif main_menu in [
 
     # ZERO STOCK REPORT
     elif main_menu == "⚠️ Zero Stock Report (Latest)":
+
         st.subheader("Zero Stock Outlets Report")
 
-        tab_dairy, tab_rice = st.tabs(["🥛 Dairies", "🍚 Rice"])
+        tab_dairy, tab_rice = st.tabs(
+            ["🥛 Dairies", "🍚 Rice"]
+        )
 
         def render_zero_stock(category):
+
             category_df = outlets_df[
                 outlets_df["Category"] == category
             ]
@@ -1412,13 +1695,18 @@ elif main_menu in [
             ].copy()
 
             if zero_df.empty:
-                st.success(f"No zero-stock {category} items found.")
+                st.success(
+                    f"No zero-stock {category} items found."
+                )
                 return
 
             item_options = [
                 "All Zero Stock Items"
             ] + sorted(
-                zero_df[item_col].dropna().astype(str).unique()
+                zero_df[item_col]
+                .dropna()
+                .astype(str)
+                .unique()
             )
 
             selected_zero_item = st.selectbox(
@@ -1429,10 +1717,14 @@ elif main_menu in [
 
             if selected_zero_item != "All Zero Stock Items":
                 zero_df = zero_df[
-                    zero_df[item_col].astype(str) == selected_zero_item
+                    zero_df[item_col].astype(str)
+                    == selected_zero_item
                 ]
 
-            st.metric("Zero Stock Records", f"{len(zero_df):,}")
+            st.metric(
+                "Zero Stock Records",
+                f"{len(zero_df):,}"
+            )
 
             display_cols = [
                 store_col,
@@ -1448,11 +1740,19 @@ elif main_menu in [
             ]
 
             report = zero_df[display_cols].copy()
-            st.dataframe(report, use_container_width=True, hide_index=True)
+
+            st.dataframe(
+                report,
+                use_container_width=True,
+                hide_index=True
+            )
 
             st.download_button(
                 f"Download {category} Zero Stock Excel",
-                data=dataframe_to_excel(report, category),
+                data=dataframe_to_excel(
+                    report,
+                    category
+                ),
                 file_name=f"{category}_Zero_Stock.xlsx",
                 mime=(
                     "application/vnd.openxmlformats-officedocument."
@@ -1469,10 +1769,14 @@ elif main_menu in [
 
     # WAREHOUSE STOCK
     elif main_menu == "🏬 Warehouse Stock (Latest)":
+
         st.subheader("Warehouse Stock — DCW1")
 
         if warehouse_df.empty:
-            st.warning("No DCW1 warehouse records found.")
+            st.warning(
+                "No DCW1 warehouse records found."
+            )
+
         else:
             warehouse_df = warehouse_df.drop_duplicates(
                 subset=["SKU"],
