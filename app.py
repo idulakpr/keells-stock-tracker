@@ -1351,7 +1351,7 @@ elif main_menu == "📊 Arpico PO Analysis":
             # pack_size_kg = weight of ONE Arpico ordered pack
             # -------------------------------------------------
             product_mapping = {
-                "GRRG83471":  {"material_code": "WB1012",    "pack_size_kg": 1.0},
+                "GRRG83471":  {"material_code": "WB1012",    "pack_size_kg": 12.0},
                 "GRRG82658":  {"material_code": "WB1002",    "pack_size_kg": 2.0},
                 "GRRG778481": {"material_code": "WBL1005",   "pack_size_kg": 5.0},
                 "GRRG716042": {"material_code": "SS1012",    "pack_size_kg": 1.0},
