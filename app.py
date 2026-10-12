@@ -1332,6 +1332,199 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
 
             except Exception as e:
                 st.error(f"Could not process the PDF: {e}")
+                
+# =========================================================
+# ARPICO PO ANALYSIS
+# =========================================================
+
+elif main_menu == "📊 Arpico PO Analysis":
+
+    import pandas as pd
+    import streamlit as st
+
+    st.header("📊 Arpico PO Analysis")
+
+    if check_admin_password():
+
+        try:
+            response = (
+                supabase
+                .table("arpico_po_items")
+                .select("*")
+                .order("po_date", desc=True)
+                .execute()
+            )
+
+            data = response.data or []
+
+            if not data:
+                st.info("No Arpico PO records found.")
+            else:
+                df = pd.DataFrame(data)
+
+                # Convert numeric fields safely
+                for col in ["amount", "ordered_qty", "rate"]:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(
+                            df[col], errors="coerce"
+                        ).fillna(0)
+
+                if "po_date" in df.columns:
+                    df["po_date"] = pd.to_datetime(
+                        df["po_date"], errors="coerce"
+                    )
+
+                # Filters
+                st.subheader("Filters")
+
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    outlets = sorted(
+                        df["outlet_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+
+                    selected_outlets = st.multiselect(
+                        "Select outlets",
+                        outlets,
+                        default=outlets
+                    )
+
+                with c2:
+                    items = sorted(
+                        df["item_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+
+                    selected_items = st.multiselect(
+                        "Select items",
+                        items,
+                        default=items
+                    )
+
+                filtered = df[
+                    df["outlet_name"].astype(str).isin(
+                        selected_outlets
+                    )
+                    & df["item_name"].astype(str).isin(
+                        selected_items
+                    )
+                ].copy()
+
+                # Summary
+                total_value = filtered["amount"].sum()
+                outlet_count = filtered["outlet_name"].nunique()
+                item_count = filtered["item_code"].nunique()
+                total_qty = filtered["ordered_qty"].sum()
+
+                m1, m2, m3, m4 = st.columns(4)
+
+                m1.metric("Total PO Value", f"Rs. {total_value:,.2f}")
+                m2.metric("Outlets", f"{outlet_count:,}")
+                m3.metric("Items", f"{item_count:,}")
+                m4.metric("Ordered Qty", f"{total_qty:,.0f}")
+
+                # Outlet-wise report
+                st.subheader("1. Outlet-wise PO Values")
+
+                outlet_summary = (
+                    filtered.groupby("outlet_name", as_index=False)
+                    .agg(
+                        PO_Value=("amount", "sum"),
+                        Ordered_Qty=("ordered_qty", "sum"),
+                        Item_Count=("item_code", "nunique"),
+                        PO_Count=("po_number", "nunique")
+                    )
+                    .sort_values("PO_Value", ascending=False)
+                )
+
+                st.dataframe(
+                    outlet_summary,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Item-wise report
+                st.subheader("2. Outlet-wise Item Analysis")
+
+                if not filtered.empty:
+                    selected_outlet = st.selectbox(
+                        "Select an outlet",
+                        sorted(
+                            filtered["outlet_name"]
+                            .dropna()
+                            .astype(str)
+                            .unique()
+                            .tolist()
+                        )
+                    )
+
+                    outlet_items = filtered[
+                        filtered["outlet_name"].astype(str)
+                        == selected_outlet
+                    ]
+
+                    item_summary = (
+                        outlet_items.groupby(
+                            ["item_code", "item_name"],
+                            as_index=False
+                        )
+                        .agg(
+                            Ordered_Qty=("ordered_qty", "sum"),
+                            Rate=("rate", "mean"),
+                            PO_Value=("amount", "sum")
+                        )
+                        .sort_values("PO_Value", ascending=False)
+                    )
+
+                    st.dataframe(
+                        item_summary,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No records match the selected filters.")
+
+                # Excel download
+                st.subheader("3. Download Report")
+
+                output = io.BytesIO()
+
+                with pd.ExcelWriter(
+                    output, engine="openpyxl"
+                ) as writer:
+                    outlet_summary.to_excel(
+                        writer,
+                        sheet_name="Outlet Summary",
+                        index=False
+                    )
+
+                    filtered.to_excel(
+                        writer,
+                        sheet_name="PO Details",
+                        index=False
+                    )
+
+                st.download_button(
+                    "⬇️ Download Excel Report",
+                    data=output.getvalue(),
+                    file_name="Arpico_PO_Analysis.xlsx",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument"
+                        ".spreadsheetml.sheet"
+                    )
+                )
+
+        except Exception as e:
+            st.error(f"Could not load Arpico PO data: {e}")
+
 
 elif main_menu == "📤 Upload New Stock (Admin)":
 
