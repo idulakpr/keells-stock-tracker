@@ -1480,7 +1480,7 @@ elif main_menu == "📊 Arpico PO Analysis":
 
 # DEBUG: CHECK SAP DATA AND PO MATCHING
 
-st.subheader("🔍 SAP Mapping & Matching Check")
+    st.subheader("🔍 SAP Mapping & Matching Check")
 
 st.write("Arpico PO records:", len(po_df))
 st.write("SAP sales records:", len(sales_df))
