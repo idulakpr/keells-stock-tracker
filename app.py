@@ -583,6 +583,7 @@ if main_menu == "📤 Upload Sales Report (Admin)":
                                     "Existing identical rows are ignored."
                                 )
 
+                   
                             except Exception as e:
                                 st.error(
                                     f"Sales upload failed: {e}"
@@ -593,11 +594,10 @@ if main_menu == "📤 Upload Sales Report (Admin)":
                                     "database permissions and column types."
                                 )
 
-        
-except Exception as e:
-    st.error(
-        f"Could not read the Excel file: {e}"
-    )
+                except Exception as e:
+                    st.error(
+                        f"Could not read the Excel file: {e}"
+                    )
 
 
 # =========================================================
@@ -613,6 +613,7 @@ elif main_menu == "📊 All-Channel Sales Analysis":
     except Exception as e:
         st.error(f"Could not retrieve sales data: {e}")
         sales_df = pd.DataFrame()
+
 
     if sales_df.empty:
 
