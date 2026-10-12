@@ -1334,272 +1334,410 @@ elif main_menu == "📄 Arpico PO PDF Upload (Admin)":
             except Exception as e:
                 st.error(f"Could not process the PDF: {e}")
                 
+
 # =========================================================
-# ARPICO PO ANALYSIS
+# ARPICO PO ANALYSIS + FILL RATE
 # =========================================================
 
 elif main_menu == "📊 Arpico PO Analysis":
 
-    import pandas as pd
-    import streamlit as st
-
-    st.header("📊 Arpico PO Analysis")
+    st.header("📊 Arpico PO Analysis & Fill Rate")
 
     if check_admin_password():
 
         try:
-            response = (
-                supabase
-                .table("arpico_po_items")
+            # -------------------------------------------------
+            # PRODUCT MAPPING
+            # pack_size_kg = weight of ONE Arpico ordered pack
+            # -------------------------------------------------
+            product_mapping = {
+                "GRRG83471":  {"material_code": "WB1012",    "pack_size_kg": 1.0},
+                "GRRG82658":  {"material_code": "WB1002",    "pack_size_kg": 2.0},
+                "GRRG778481": {"material_code": "WBL1005",   "pack_size_kg": 5.0},
+                "GRRG716042": {"material_code": "SS1012",    "pack_size_kg": 1.0},
+                "GRRG736137": {"material_code": "SS1005",    "pack_size_kg": 5.0},
+                "GRRG748333": {"material_code": "RSR1012",   "pack_size_kg": 1.0},
+                "GRRG759339": {"material_code": "RSR1005",   "pack_size_kg": 5.0},
+                "GRRG16346":  {"material_code": "PBR1025",   "pack_size_kg": 25.0},
+                "GRRG793679": {"material_code": "FRLGI1012", "pack_size_kg": 1.0},
+                "GRRG929690": {"material_code": "FRLGI1005", "pack_size_kg": 5.0},
+                "GRRG914890": {"material_code": "PQ0750",    "pack_size_kg": 0.75},
+                "GRRG83468":  {"material_code": "WGLGI1012", "pack_size_kg": 1.0},
+                "GRRG740592": {"material_code": "WSPLGI1012","pack_size_kg": 1.0},
+                "GRRG80455":  {"material_code": "RB1025",    "pack_size_kg": 25.0},
+                "GRRG83476":  {"material_code": "SW1012",    "pack_size_kg": 1.0},
+                "GRRG83477":  {"material_code": "SW1002",    "pack_size_kg": 2.0},
+                "GRRG83482":  {"material_code": "KL1012",    "pack_size_kg": 1.0},
+                "GRRG765328": {"material_code": "KT1012",    "pack_size_kg": 1.0},
+            }
+
+            # -------------------------------------------------
+            # LOAD PO AND SALES DATA
+            # -------------------------------------------------
+            po_response = (
+                supabase.table("arpico_po_items")
                 .select("*")
                 .order("po_date", desc=True)
                 .execute()
             )
 
-            data = response.data or []
+            po_data = po_response.data or []
 
-            if not data:
+            if not po_data:
                 st.info("No Arpico PO records found.")
+
             else:
-                df = pd.DataFrame(data)
+                po_df = pd.DataFrame(po_data)
 
-                # Convert numeric fields safely
-                for col in ["amount", "ordered_qty", "rate"]:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(
-                            df[col], errors="coerce"
-                        ).fillna(0)
+                sales_df = fetch_all_rows("sales_history")
 
-                if "po_date" in df.columns:
-                    df["po_date"] = pd.to_datetime(
-                        df["po_date"], errors="coerce"
+                if sales_df.empty:
+                    st.warning(
+                        "No SAP sales records found. "
+                        "Upload the SAP Sales Report first."
                     )
 
-              
-                # Filters
+                # Normalize codes and PO numbers
+                for col in ["po_number", "item_code", "outlet_name", "item_name"]:
+                    if col in po_df.columns:
+                        po_df[col] = po_df[col].fillna("").astype(str).str.strip()
+
+                for col in ["po_number", "material_code", "net_weight"]:
+                    if col in sales_df.columns:
+                        sales_df[col] = sales_df[col].fillna("").astype(str).str.strip()
+
+                po_df["ordered_qty"] = pd.to_numeric(
+                    po_df["ordered_qty"], errors="coerce"
+                ).fillna(0)
+
+                po_df["amount"] = pd.to_numeric(
+                    po_df["amount"], errors="coerce"
+                ).fillna(0)
+
+                po_df["rate"] = pd.to_numeric(
+                    po_df["rate"], errors="coerce"
+                ).fillna(0)
+
+                if not sales_df.empty:
+                    sales_df["net_weight"] = pd.to_numeric(
+                        sales_df["net_weight"], errors="coerce"
+                    ).fillna(0)
+
+                # -------------------------------------------------
+                # AGGREGATE DELIVERIES BY PO + SAP MATERIAL
+                # -------------------------------------------------
+                if not sales_df.empty:
+                    sales_df["po_number"] = (
+                        sales_df["po_number"].astype(str).str.strip()
+                    )
+                    sales_df["material_code"] = (
+                        sales_df["material_code"].astype(str).str.strip()
+                    )
+
+                    delivery_summary = (
+                        sales_df.groupby(
+                            ["po_number", "material_code"],
+                            as_index=False
+                        )
+                        .agg(
+                            Delivered_Weight_Kg=("net_weight", "sum")
+                        )
+                    )
+                else:
+                    delivery_summary = pd.DataFrame(
+                        columns=[
+                            "po_number",
+                            "material_code",
+                            "Delivered_Weight_Kg"
+                        ]
+                    )
+
+                # -------------------------------------------------
+                # MAP PO LINES TO SAP MATERIALS
+                # -------------------------------------------------
+                po_df["Material_Code"] = po_df["item_code"].map(
+                    lambda x: product_mapping.get(x, {}).get(
+                        "material_code"
+                    )
+                )
+
+                po_df["Pack_Size_Kg"] = po_df["item_code"].map(
+                    lambda x: product_mapping.get(x, {}).get(
+                        "pack_size_kg"
+                    )
+                )
+
+                po_df["Mapping_Status"] = po_df["Material_Code"].apply(
+                    lambda x: "Mapped" if pd.notna(x) else "Unmapped"
+                )
+
+                report = po_df.merge(
+                    delivery_summary,
+                    left_on=["po_number", "Material_Code"],
+                    right_on=["po_number", "material_code"],
+                    how="left"
+                )
+
+                report["Delivered_Weight_Kg"] = pd.to_numeric(
+                    report["Delivered_Weight_Kg"], errors="coerce"
+                ).fillna(0)
+
+                # Convert delivered kg to individual consumer packs
+                report["Delivered_Qty"] = 0.0
+
+                mapped_mask = (
+                    report["Pack_Size_Kg"].notna()
+                    & (report["Pack_Size_Kg"] > 0)
+                )
+
+                report.loc[mapped_mask, "Delivered_Qty"] = (
+                    report.loc[mapped_mask, "Delivered_Weight_Kg"]
+                    / report.loc[mapped_mask, "Pack_Size_Kg"]
+                )
+
+                report["Balance_Qty"] = (
+                    report["ordered_qty"] - report["Delivered_Qty"]
+                ).clip(lower=0)
+
+                report["Fill_Rate_%"] = 0.0
+
+                valid_order = report["ordered_qty"] > 0
+
+                report.loc[valid_order, "Fill_Rate_%"] = (
+                    report.loc[valid_order, "Delivered_Qty"]
+                    / report.loc[valid_order, "ordered_qty"]
+                    * 100
+                )
+
+                report["Fill_Rate_%"] = report["Fill_Rate_%"].clip(
+                    lower=0, upper=100
+                )
+
+                report["Status"] = "Not Supplied"
+
+                report.loc[
+                    report["Delivered_Qty"] > 0,
+                    "Status"
+                ] = "Partially Supplied"
+
+                report.loc[
+                    valid_order
+                    & (
+                        report["Delivered_Qty"]
+                        >= report["ordered_qty"]
+                    ),
+                    "Status"
+                ] = "Fully Supplied"
+
+                report.loc[
+                    report["Mapping_Status"] == "Unmapped",
+                    "Status"
+                ] = "Unmapped Product"
+
+                # -------------------------------------------------
+                # FILTERS
+                # -------------------------------------------------
                 st.subheader("Filters")
 
                 c1, c2, c3 = st.columns(3)
 
                 with c1:
-                    outlets = sorted(
-                        df["outlet_name"]
-                        .dropna()
-                        .astype(str)
-                        .unique()
-                        .tolist()
+                    outlet_options = sorted(
+                        report["outlet_name"].dropna().astype(str).unique()
                     )
-
                     selected_outlets = st.multiselect(
-                        "Select outlets",
-                        outlets,
-                        default=outlets
+                        "Select Outlets",
+                        outlet_options,
+                        default=outlet_options
                     )
 
                 with c2:
                     po_options = sorted(
-                        df["po_number"]
-                        .dropna()
-                        .astype(str)
-                        .unique()
-                        .tolist(),
+                        report["po_number"].dropna().astype(str).unique(),
                         reverse=True
                     )
-
                     selected_pos = st.multiselect(
-                        "Select PO number",
+                        "Select PO Numbers",
                         po_options,
                         default=po_options
                     )
 
                 with c3:
-                    items = sorted(
-                        df["item_name"]
-                        .dropna()
-                        .astype(str)
-                        .unique()
-                        .tolist()
+                    item_options = sorted(
+                        report["item_name"].dropna().astype(str).unique()
                     )
-
                     selected_items = st.multiselect(
-                        "Select items",
-                        items,
-                        default=items
+                        "Select Items",
+                        item_options,
+                        default=item_options
                     )
 
-                filtered = df[
-                    df["outlet_name"].astype(str).isin(
-                        selected_outlets
-                    )
-                    & df["po_number"].astype(str).isin(
-                        selected_pos
-                    )
-                    & df["item_name"].astype(str).isin(
-                        selected_items
-                    )
+                filtered = report[
+                    report["outlet_name"].astype(str).isin(selected_outlets)
+                    & report["po_number"].astype(str).isin(selected_pos)
+                    & report["item_name"].astype(str).isin(selected_items)
                 ].copy()
 
-                # Summary
+                # -------------------------------------------------
+                # KPI SUMMARY
+                # -------------------------------------------------
                 total_value = filtered["amount"].sum()
-                outlet_count = filtered["outlet_name"].nunique()
-                item_count = filtered["item_code"].nunique()
-                total_qty = filtered["ordered_qty"].sum()
+                total_ordered = filtered["ordered_qty"].sum()
+                total_delivered = filtered["Delivered_Qty"].sum()
+                total_balance = filtered["Balance_Qty"].sum()
 
-                m1, m2, m3, m4 = st.columns(4)
+                overall_fill = (
+                    total_delivered / total_ordered * 100
+                    if total_ordered > 0 else 0
+                )
 
+                m1, m2, m3 = st.columns(3)
                 m1.metric("Total PO Value", f"Rs. {total_value:,.2f}")
-                m2.metric("Outlets", f"{outlet_count:,}")
-                m3.metric("Items", f"{item_count:,}")
-                m4.metric("Ordered Qty", f"{total_qty:,.0f}")
+                m2.metric("Ordered Qty", f"{total_ordered:,.2f}")
+                m3.metric("Delivered Qty", f"{total_delivered:,.2f}")
 
-                # Outlet-wise report
-                st.subheader("1. Outlet-wise PO Values")
+                m4, m5, m6 = st.columns(3)
+                m4.metric("Balance Qty", f"{total_balance:,.2f}")
+                m5.metric("Overall Fill Rate", f"{overall_fill:.1f}%")
+                m6.metric("PO Count", f"{filtered['po_number'].nunique():,}")
+
+                # -------------------------------------------------
+                # PO-WISE FILL RATE
+                # -------------------------------------------------
+                st.subheader("1. PO-wise Fill Rate")
+
+                po_summary = (
+                    filtered.groupby(
+                        ["po_number", "outlet_name"],
+                        as_index=False
+                    )
+                    .agg(
+                        Ordered_Qty=("ordered_qty", "sum"),
+                        Delivered_Qty=("Delivered_Qty", "sum"),
+                        Balance_Qty=("Balance_Qty", "sum"),
+                        PO_Value=("amount", "sum"),
+                        Item_Count=("item_code", "nunique")
+                    )
+                )
+
+                po_summary["Fill_Rate_%"] = (
+                    po_summary["Delivered_Qty"]
+                    / po_summary["Ordered_Qty"].replace(0, pd.NA)
+                    * 100
+                ).fillna(0).clip(upper=100)
+
+                st.dataframe(
+                    po_summary.round(2),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # -------------------------------------------------
+                # OUTLET-WISE SUMMARY
+                # -------------------------------------------------
+                st.subheader("2. Outlet-wise Fill Rate")
 
                 outlet_summary = (
                     filtered.groupby("outlet_name", as_index=False)
                     .agg(
                         PO_Value=("amount", "sum"),
                         Ordered_Qty=("ordered_qty", "sum"),
-                        Item_Count=("item_code", "nunique"),
+                        Delivered_Qty=("Delivered_Qty", "sum"),
+                        Balance_Qty=("Balance_Qty", "sum"),
                         PO_Count=("po_number", "nunique")
                     )
-                    .sort_values("PO_Value", ascending=False)
                 )
 
+                outlet_summary["Fill_Rate_%"] = (
+                    outlet_summary["Delivered_Qty"]
+                    / outlet_summary["Ordered_Qty"].replace(0, pd.NA)
+                    * 100
+                ).fillna(0).clip(upper=100)
+
                 st.dataframe(
-                    outlet_summary,
+                    outlet_summary.round(2),
                     use_container_width=True,
                     hide_index=True
                 )
 
-                # Item-wise report
-                st.subheader("2. Outlet-wise Item Analysis")
+                # -------------------------------------------------
+                # ITEM-WISE FILL RATE
+                # -------------------------------------------------
+                st.subheader("3. Item-wise Fill Rate")
 
-                if not filtered.empty:
-                    selected_outlet = st.selectbox(
-                        "Select an outlet",
-                        sorted(
-                            filtered["outlet_name"]
-                            .dropna()
-                            .astype(str)
-                            .unique()
-                            .tolist()
-                        )
+                item_columns = [
+                    "po_number", "outlet_name", "item_code", "item_name",
+                    "Material_Code", "ordered_qty", "Delivered_Weight_Kg",
+                    "Delivered_Qty", "Balance_Qty", "Fill_Rate_%",
+                    "Status", "Mapping_Status"
+                ]
+
+                item_columns = [
+                    c for c in item_columns if c in filtered.columns
+                ]
+
+                st.dataframe(
+                    filtered[item_columns].round(2),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # -------------------------------------------------
+                # UNMAPPED PRODUCTS
+                # -------------------------------------------------
+                st.subheader("4. Products Requiring Mapping")
+
+                unmapped = filtered[
+                    filtered["Mapping_Status"] == "Unmapped"
+                ].copy()
+
+                if unmapped.empty:
+                    st.success("All filtered PO products are mapped.")
+                else:
+                    st.warning(
+                        "These products cannot yet be matched to SAP sales."
                     )
-
-                    outlet_items = filtered[
-                        filtered["outlet_name"].astype(str)
-                        == selected_outlet
-                    ]
-
-                    item_summary = (
-                        outlet_items.groupby(
-                            ["item_code", "item_name"],
-                            as_index=False
-                        )
-                        .agg(
-                            Ordered_Qty=("ordered_qty", "sum"),
-                            Rate=("rate", "mean"),
-                            PO_Value=("amount", "sum")
-                        )
-                        .sort_values("PO_Value", ascending=False)
-                    )
-
                     st.dataframe(
-                        item_summary,
+                        unmapped[
+                            ["item_code", "item_name", "ordered_qty", "po_number"]
+                        ],
                         use_container_width=True,
                         hide_index=True
                     )
-                else:
-                    st.info("No records match the selected filters.")
-                    
-# TEMPORARY CHECK: PO and Sales Data Matching
 
-st.subheader("🔎 Check PO vs Sales Data Matching")
-
-try:
-    sales_check = fetch_all_rows("sales_history")
-
-    if sales_check.empty:
-        st.warning("No sales records found.")
-    else:
-        selected_po_check = st.selectbox(
-            "Select an Arpico PO to inspect",
-            sorted(
-                df["po_number"].dropna().astype(str).unique(),
-                reverse=True
-            ),
-            key="diagnostic_po"
-        )
-
-        po_check = df[
-            df["po_number"].astype(str) == selected_po_check
-        ].copy()
-
-        st.write("**Selected PO — sample items**")
-        st.dataframe(
-            po_check[
-                [
-                    "po_number", "outlet_name", "item_code",
-                    "item_name", "ordered_qty"
-                ]
-            ].head(10),
-            use_container_width=True
-        )
-
-        st.write("**Sales data — sample records**")
-        sales_columns = [
-            "po_number", "sold_to_party", "material_code",
-            "material_description", "invoiced_quantity",
-            "unit", "net_weight", "billing_date"
-        ]
-
-        available_columns = [
-            c for c in sales_columns if c in sales_check.columns
-        ]
-
-        st.dataframe(
-            sales_check[available_columns].head(10),
-            use_container_width=True
-        )
-
-except Exception as e:
-    st.error(f"Diagnostic check failed: {e}")
-
-
-                # Excel download
-                st.subheader("3. Download Report")
+                # -------------------------------------------------
+                # EXCEL DOWNLOAD
+                # -------------------------------------------------
+                st.subheader("5. Download Report")
 
                 output = io.BytesIO()
 
-                with pd.ExcelWriter(
-                    output, engine="openpyxl"
-                ) as writer:
-                    outlet_summary.to_excel(
-                        writer,
-                        sheet_name="Outlet Summary",
-                        index=False
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    po_summary.round(2).to_excel(
+                        writer, sheet_name="PO Summary", index=False
                     )
-
-                    filtered.to_excel(
-                        writer,
-                        sheet_name="PO Details",
-                        index=False
+                    outlet_summary.round(2).to_excel(
+                        writer, sheet_name="Outlet Summary", index=False
+                    )
+                    filtered.round(2).to_excel(
+                        writer, sheet_name="PO Item Details", index=False
+                    )
+                    unmapped.to_excel(
+                        writer, sheet_name="Unmapped Items", index=False
                     )
 
                 st.download_button(
-                    "⬇️ Download Excel Report",
+                    "⬇️ Download Fill Rate Excel",
                     data=output.getvalue(),
-                    file_name="Arpico_PO_Analysis.xlsx",
+                    file_name="Arpico_PO_Fill_Rate.xlsx",
                     mime=(
-                        "application/vnd.openxmlformats-officedocument"
-                        ".spreadsheetml.sheet"
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
                     )
                 )
 
         except Exception as e:
-            st.error(f"Could not load Arpico PO data: {e}")
-
+            st.error(f"Could not load Arpico PO analysis: {e}")
 
 elif main_menu == "📤 Upload New Stock (Admin)":
 
