@@ -270,7 +270,7 @@ main_menu = st.sidebar.radio(
         "📊 All-Channel Sales Analysis",
         "📤 Upload Sales Report (Admin)",
         "📄 Arpico PO PDF Upload (Admin)",
-        "📊 Arpico PO Analysis"
+        "📊 Arpico PO Analysis",
         "🔍 Outlet Stock Search (Latest)",
         "⚠️ Zero Stock Report (Latest)",
         "🏬 Warehouse Stock (Latest)",
