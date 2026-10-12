@@ -593,21 +593,23 @@ if main_menu == "📤 Upload Sales Report (Admin)":
                                     "database permissions and column types."
                                 )
 
-            except Exception as e:
-                st.error(
-                    f"Could not read the Excel file: {e}"
-                )
+        
+except Exception as e:
+    st.error(
+        f"Could not read the Excel file: {e}"
+    )
 
 
 # =========================================================
 # 2. ALL-CHANNEL SALES ANALYSIS
 # =========================================================
-  elif main_menu == "📊 All-Channel Sales Analysis":
+elif main_menu == "📊 All-Channel Sales Analysis":
 
     st.header("📊 All-Channel Modern Trade Sales Analysis")
 
     try:
         sales_df = fetch_all_rows("sales_history")
+
     except Exception as e:
         st.error(f"Could not retrieve sales data: {e}")
         sales_df = pd.DataFrame()
