@@ -1402,9 +1402,28 @@ elif main_menu == "📊 Arpico PO Analysis":
                     if col in po_df.columns:
                         po_df[col] = po_df[col].fillna("").astype(str).str.strip()
 
-                for col in ["po_number", "material_code", "net_weight"]:
-                    if col in sales_df.columns:
-                        sales_df[col] = sales_df[col].fillna("").astype(str).str.strip()
+               
+for col in ["po_number", "material_code"]:
+    if col in sales_df.columns:
+        sales_df[col] = (
+            sales_df[col]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+sales_df["net_weight"] = pd.to_numeric(
+    sales_df["net_weight"], errors="coerce"
+).fillna(0)
+
+po_df["po_number"] = (
+    po_df["po_number"].fillna("").astype(str).str.strip()
+)
+
+po_df["item_code"] = (
+    po_df["item_code"].fillna("").astype(str).str.strip()
+)
+
 
                 po_df["ordered_qty"] = pd.to_numeric(
                     po_df["ordered_qty"], errors="coerce"
