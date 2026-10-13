@@ -1479,40 +1479,42 @@ elif main_menu == "📊 Arpico PO Analysis":
                     )
 
 
-    # DEBUG: CHECK SAP DATA AND PO MATCHING
-    st.subheader("🔍 SAP Mapping & Matching Check")
+   
+                # DEBUG: CHECK SAP DATA AND PO MATCHING
+                st.subheader("🔍 SAP Mapping & Matching Check")
 
-    st.write("Arpico PO records:", len(po_df))
-    st.write("SAP sales records:", len(sales_df))
+                st.write("Arpico PO records:", len(po_df))
+                st.write("SAP sales records:", len(sales_df))
 
-    st.write("Arpico PO sample:")
-    st.dataframe(
-        po_df[
-            ["po_number", "item_code", "item_name", "ordered_qty"]
-        ].head(10),
-        use_container_width=True
-    )
+                st.write("Arpico PO sample:")
+                st.dataframe(
+                    po_df[
+                        ["po_number", "item_code", "item_name", "ordered_qty"]
+                    ].head(10),
+                    use_container_width=True
+                )
 
-    if not sales_df.empty:
-        st.write("SAP sales sample:")
-        st.dataframe(
-            sales_df[
-                ["po_number", "material_code", "net_weight"]
-            ].head(10),
-            use_container_width=True
-        )
+                if not sales_df.empty:
+                    st.write("SAP sales sample:")
+                    st.dataframe(
+                        sales_df[
+                            ["po_number", "material_code", "net_weight"]
+                        ].head(10),
+                        use_container_width=True
+                    )
 
-        st.write("SAP material codes found:")
-        st.write(
-            sorted(
-                sales_df["material_code"]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .unique()
-                .tolist()
-            )[:100]
-        )
+                    st.write("SAP material codes found:")
+                    st.write(
+                        sorted(
+                            sales_df["material_code"]
+                            .dropna()
+                            .astype(str)
+                            .str.strip()
+                            .unique()
+                            .tolist()
+                        )[:100]
+                    )
+
 
                 # -------------------------------------------------
                 # MAP PO LINES TO SAP MATERIALS
